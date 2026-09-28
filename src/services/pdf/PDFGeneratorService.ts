@@ -243,22 +243,7 @@ async function fetchAllProducts():
     } = await supabaseAdmin
       .from("products")
       .select(
-        [
-          "id",
-          "mepak_kodu",
-          "tanim_tr",
-          "tanim_en",
-          "marka_adi",
-          "markalar",
-          "oem_no",
-          "oem_nolari",
-          "model",
-          "model_yil",
-          "resim_kodlari",
-          "metadata",
-          "category",
-          "is_active",
-        ].join(",")
+        "id, mepak_kodu, tanim_tr, tanim_en, marka_adi, markalar, oem_no, oem_nolari, model, model_yil, resim_kodlari, metadata, category, is_active"
       )
       .eq(
         "is_active",
@@ -634,20 +619,9 @@ export async function generateCatalogPDF(
   }
 
   // ─────────────────────────────────────────────────────────
-  // GERÇEK PDF SAYFA NUMARALARINI HESAPLA
+  // Gerçek PDF sayfa numaraları
   // ─────────────────────────────────────────────────────────
 
-  /*
-   * Bu map bütün katalog yapısı üzerinden hesaplanır.
-   *
-   * Örnek:
-   *
-   * MERCEDES -> 10
-   * MAN      -> 57
-   * VOLVO    -> 96
-   *
-   * Marka dizini ve ürün chunk'ları aynı map'i kullanır.
-   */
   const brandStartPages =
     calculateBrandStartPages(
       groupedBrands
@@ -842,10 +816,6 @@ export async function generateCatalogPDF(
               `${hash}_chunk_prod_${globalIdx}`
             );
 
-          /*
-           * Bu markanın gerçek katalog
-           * başlangıç sayfasını al.
-           */
           const startPageNumber =
             brandStartPages[
               brand.brand
@@ -859,12 +829,6 @@ export async function generateCatalogPDF(
             );
           }
 
-          /*
-           * ÖNEMLİ:
-           *
-           * Artık ProductPages 1'den başlamıyor.
-           * Gerçek PDF sayfasından başlıyor.
-           */
           const chunkStream =
             await renderToStream(
               getProductChunk(
