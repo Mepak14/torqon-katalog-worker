@@ -10,9 +10,10 @@ import {
 import fs from "fs";
 
 /**
- * PDF annotation içindeki string değerini okur.
+ * PDF içindeki string / name değerlerini
+ * normal metne dönüştürür.
  */
-function decodePdfString(
+function decodePdfText(
   value: unknown
 ): string | null {
   if (
@@ -22,15 +23,74 @@ function decodePdfString(
     return value.decodeText();
   }
 
+  if (
+    value instanceof PDFName
+  ) {
+    return value
+      .toString()
+      .replace(
+        /^\//,
+        ""
+      );
+  }
+
   return null;
 }
 
 /**
- * React PDF tarafından oluşturulan:
+ * page=48 veya #page=48 gibi değerlerden
+ * sayfa numarasını çıkarır.
+ */
+function parsePageNumber(
+  value: string | null
+): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const match =
+    value.match(
+      /^#?page=(\d+)$/
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const pageNumber =
+    Number(match[1]);
+
+  if (
+    !Number.isInteger(
+      pageNumber
+    ) ||
+    pageNumber <= 0
+  ) {
+    return null;
+  }
+
+  return pageNumber;
+}
+
+/**
+ * React-PDF tarafından oluşturulan
+ * marka dizini linkinin hedef sayfasını bulur.
  *
- * #page=12
+ * React-PDF:
  *
- * biçimindeki bağlantıları bulur.
+ * <Link src="#page=48">
+ *
+ * kullanımını PDF içinde çoğunlukla:
+ *
+ * /A <<
+ *   /S /GoTo
+ *   /D (page=48)
+ * >>
+ *
+ * biçiminde oluşturur.
+ *
+ * Eski kodumuz yalnızca /URI alanına baktığı
+ * için bu linkleri göremiyordu.
  */
 function getPageNumberFromAnnotation(
   pdf: PDFDocument,
@@ -39,16 +99,10 @@ function getPageNumberFromAnnotation(
   const context =
     pdf.context;
 
-  /*
-   * React PDF Link çoğunlukla:
-   *
-   * /A <<
-   *   /S /URI
-   *   /URI (#page=12)
-   * >>
-   *
-   * şeklinde gelir.
-   */
+  // ─────────────────────────────────────────────
+  // 1. Action kontrolü
+  // ─────────────────────────────────────────────
+
   const actionObject =
     annotation.get(
       PDFName.of("A")
@@ -62,76 +116,101 @@ function getPageNumberFromAnnotation(
           PDFDict
         );
 
+      // ─────────────────────────────────────────
+      // React-PDF iç link:
+      //
+      // /A <<
+      //   /S /GoTo
+      //   /D (page=48)
+      // >>
+      // ─────────────────────────────────────────
+
+      const destinationObject =
+        action.get(
+          PDFName.of("D")
+        );
+
+      const destinationText =
+        decodePdfText(
+          destinationObject
+        );
+
+      const destinationPage =
+        parsePageNumber(
+          destinationText
+        );
+
+      if (
+        destinationPage !==
+        null
+      ) {
+        return destinationPage;
+      }
+
+      // ─────────────────────────────────────────
+      // Normal URI ihtimalini de destekle.
+      // ─────────────────────────────────────────
+
       const uriObject =
         action.get(
           PDFName.of("URI")
         );
 
-      const uri =
-        decodePdfString(
+      const uriText =
+        decodePdfText(
           uriObject
         );
 
-      if (uri) {
-        const match =
-          uri.match(
-            /^#page=(\d+)$/
-          );
+      const uriPage =
+        parsePageNumber(
+          uriText
+        );
 
-        if (match) {
-          return Number(
-            match[1]
-          );
-        }
+      if (
+        uriPage !== null
+      ) {
+        return uriPage;
       }
     } catch {
       /*
-       * Action okunamıyorsa Dest kontrolüne
-       * devam et.
+       * Action okunamazsa doğrudan Dest
+       * kontrolüne devam et.
        */
     }
   }
 
-  /*
-   * Alternatif olarak /Dest string biçiminde
-   * gelmiş olabilir.
-   */
+  // ─────────────────────────────────────────────
+  // 2. Annotation üzerinde direkt /Dest
+  // ─────────────────────────────────────────────
+
   const destObject =
     annotation.get(
       PDFName.of("Dest")
     );
 
   const destText =
-    decodePdfString(
+    decodePdfText(
       destObject
     );
 
-  if (destText) {
-    const match =
-      destText.match(
-        /^#?page=(\d+)$/
-      );
+  const destPage =
+    parsePageNumber(
+      destText
+    );
 
-    if (match) {
-      return Number(
-        match[1]
-      );
-    }
+  if (
+    destPage !== null
+  ) {
+    return destPage;
   }
 
   return null;
 }
 
 /**
- * Marka listesindeki #page=X bağlantılarını,
- * birleştirilmiş PDF içindeki gerçek sayfalara bağlar.
- *
- * Örnek:
- *
- * #page=48
- *
- * artık tarayıcı URI'si değildir.
- * PDF'in 48. sayfasına gerçek GoTo bağlantısı olur.
+ * Marka listesindeki React-PDF GoTo linklerini,
+ * birleştirilmiş PDF içindeki gerçek sayfa
+ * referanslarına dönüştürür.
  */
 function fixInternalPageLinks(
   pdf: PDFDocument
@@ -144,10 +223,14 @@ function fixInternalPageLinks(
 
   let fixedCount = 0;
 
-  for (const page of pages) {
+  for (
+    const page of pages
+  ) {
     const annotsObject =
       page.node.get(
-        PDFName.of("Annots")
+        PDFName.of(
+          "Annots"
+        )
       );
 
     if (!annotsObject) {
@@ -169,7 +252,8 @@ function fixInternalPageLinks(
 
     for (
       let i = 0;
-      i < annotations.size();
+      i <
+      annotations.size();
       i++
     ) {
       const annotationObject =
@@ -188,9 +272,6 @@ function fixInternalPageLinks(
         continue;
       }
 
-      /*
-       * Sadece Link annotation'larını değiştir.
-       */
       const subtype =
         annotation.get(
           PDFName.of(
@@ -198,6 +279,10 @@ function fixInternalPageLinks(
           )
         );
 
+      /*
+       * Yalnızca PDF Link annotation'larını
+       * işle.
+       */
       if (
         subtype?.toString() !==
         "/Link"
@@ -212,17 +297,14 @@ function fixInternalPageLinks(
         );
 
       if (
-        pageNumber === null ||
-        !Number.isInteger(
-          pageNumber
-        )
+        pageNumber === null
       ) {
         continue;
       }
 
       /*
-       * Kullanıcıdaki PDF sayfa numarası 1'den,
-       * JavaScript array ise 0'dan başlar.
+       * PDF sayfa numarası 1'den başlıyor.
+       * JavaScript dizisi ise 0'dan.
        */
       const targetIndex =
         pageNumber - 1;
@@ -245,28 +327,39 @@ function fixInternalPageLinks(
         ];
 
       /*
-       * Gerçek PDF destination:
+       * Gerçek PDF hedefi:
        *
-       * [ pageRef /Fit ]
-       *
-       * Böylece PDF okuyucu doğrudan ilgili
-       * sayfaya gider.
+       * [
+       *   pageRef
+       *   /Fit
+       * ]
        */
       const destination =
         context.obj([
           targetPage.ref,
-          PDFName.of("Fit"),
+          PDFName.of(
+            "Fit"
+          ),
         ]);
 
       /*
-       * Eski URI action'ını kaldır.
+       * Eski React-PDF GoTo action'ını kaldır.
+       *
+       * Çünkü eski action named destination
+       * arıyor:
+       *
+       * page=48
+       *
+       * fakat chunk birleştirmesi sonrasında
+       * bu named destination mevcut değil.
        */
       annotation.delete(
         PDFName.of("A")
       );
 
       /*
-       * Gerçek iç PDF hedefini ekle.
+       * Yerine doğrudan gerçek PDF sayfasını
+       * hedefleyen Dest ekle.
        */
       annotation.set(
         PDFName.of("Dest"),
@@ -281,12 +374,7 @@ function fixInternalPageLinks(
 }
 
 /**
- * Küçük PDF chunk'larını tek bir master PDF
- * altında birleştirir.
- *
- * Birleştirme tamamlandıktan sonra marka dizini
- * bağlantıları gerçek PDF sayfa bağlantılarına
- * dönüştürülür.
+ * PDF chunk'larını tek PDF haline getirir.
  */
 export async function mergePdfChunks(
   chunkFilePaths: string[],
@@ -338,9 +426,9 @@ export async function mergePdfChunks(
   }
 
   /*
-   * PDF parçaları artık tek dosya altında.
-   * Şimdi marka dizinindeki #page=X linklerini
-   * gerçek sayfa referanslarına dönüştür.
+   * Bütün chunk'lar birleştikten sonra
+   * marka dizini linklerini gerçek sayfalara
+   * bağla.
    */
   const fixedLinkCount =
     fixInternalPageLinks(
@@ -350,6 +438,20 @@ export async function mergePdfChunks(
   console.log(
     `[PDF] ${fixedLinkCount} marka dizini bağlantısı düzeltildi.`
   );
+
+  /*
+   * Ek kontrol:
+   *
+   * Marka varsa fakat hiçbir bağlantı
+   * bulunamadıysa logda açıkça görelim.
+   */
+  if (
+    fixedLinkCount === 0
+  ) {
+    console.warn(
+      "[PDF] UYARI: Marka dizininde düzeltilebilir bağlantı bulunamadı."
+    );
+  }
 
   const mergedPdfFile =
     await mergedPdf.save();
