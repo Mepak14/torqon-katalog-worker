@@ -1,7 +1,9 @@
 import { renderToStream } from "@react-pdf/renderer";
+
 import {
   getCoverAndIndexChunk,
   getProductChunk,
+  calculateBrandStartPages,
 } from "./templates/ChunkTemplates";
 
 import {
@@ -223,21 +225,9 @@ async function fetchActiveCategories():
 }
 
 // ─────────────────────────────────────────────────────────────
-// Tüm aktif ürünleri çek
+// Aktif ürünleri çek
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Eski sistemde:
- *
- * 0-999
- * 1000-1999
- * ...
- * 4000-4999
- *
- * şeklinde sabit 5000 ürün sınırı vardı.
- *
- * Artık veri bitene kadar 1000'er ürün çekilir.
- */
 async function fetchAllProducts():
   Promise<Product[]> {
   const rows: Product[] = [];
@@ -270,20 +260,16 @@ async function fetchAllProducts():
           "is_active",
         ].join(",")
       )
-
-      // PDF'de sadece aktif ürünler
       .eq(
         "is_active",
         true
       )
-
       .range(
         from,
         from +
           DB_PAGE_SIZE -
           1
       )
-
       .order(
         "mepak_kodu",
         {
@@ -306,10 +292,6 @@ async function fetchAllProducts():
       `[PDF] Ürün yükleme: ${rows.length}`
     );
 
-    /*
-     * Son sayfa 1000'den az geldiyse
-     * bütün ürünler alınmıştır.
-     */
     if (
       batch.length <
       DB_PAGE_SIZE
@@ -322,7 +304,7 @@ async function fetchAllProducts():
 }
 
 // ─────────────────────────────────────────────────────────────
-// GitHub Releases yükleme
+// GitHub Releases
 // ─────────────────────────────────────────────────────────────
 
 async function uploadToGitHubReleases(
@@ -354,9 +336,6 @@ async function uploadToGitHubReleases(
       "[PDF] GitHub Releases'e yükleniyor..."
     );
 
-    /*
-     * catalogs release yoksa oluştur.
-     */
     try {
       execSync(
         "gh release view catalogs",
@@ -377,9 +356,6 @@ async function uploadToGitHubReleases(
       );
     }
 
-    /*
-     * Yeni PDF'yi yükle.
-     */
     execSync(
       `gh release upload catalogs "${finalPath}" --clobber`,
       {
@@ -387,9 +363,6 @@ async function uploadToGitHubReleases(
       }
     );
 
-    /*
-     * Aynı katalog tipindeki eski PDF'leri kaldır.
-     */
     try {
       console.log(
         `[PDF] Eski ${baseName} dosyaları temizleniyor...`
@@ -490,7 +463,7 @@ async function uploadToGitHubReleases(
 }
 
 // ─────────────────────────────────────────────────────────────
-// Katalog oluşturma
+// PDF oluştur
 // ─────────────────────────────────────────────────────────────
 
 export async function generateCatalogPDF(
@@ -501,15 +474,7 @@ export async function generateCatalogPDF(
   const finalFilePath =
     getTempFilePath(hash);
 
-  /*
-   * Fontlar yalnızca PDF oluşturulurken
-   * kaydedilir.
-   */
   registerServerFonts();
-
-  // ─────────────────────────────────────────────────────────
-  // 1. Ürün + ayar + kategori bilgilerini paralel çek
-  // ─────────────────────────────────────────────────────────
 
   await updateJobStatus(
     jobId,
@@ -537,7 +502,7 @@ export async function generateCatalogPDF(
   );
 
   // ─────────────────────────────────────────────────────────
-  // 2. Pasif kategorilerdeki ürünleri çıkar
+  // Aktif kategori filtresi
   // ─────────────────────────────────────────────────────────
 
   const activeProducts =
@@ -568,7 +533,7 @@ export async function generateCatalogPDF(
   );
 
   // ─────────────────────────────────────────────────────────
-  // 3. Admin marka ve kategori sırasını uygula
+  // Marka + kategori sırası
   // ─────────────────────────────────────────────────────────
 
   let groupedBrands =
@@ -579,7 +544,7 @@ export async function generateCatalogPDF(
     );
 
   // ─────────────────────────────────────────────────────────
-  // 4. Özel katalog marka filtresi
+  // Marka filtresi
   // ─────────────────────────────────────────────────────────
 
   if (
@@ -605,7 +570,7 @@ export async function generateCatalogPDF(
   }
 
   // ─────────────────────────────────────────────────────────
-  // 5. Özel katalog kategori filtresi
+  // Kategori filtresi
   // ─────────────────────────────────────────────────────────
 
   if (
@@ -660,10 +625,6 @@ export async function generateCatalogPDF(
         );
   }
 
-  /*
-   * Filtrelerden sonra marka kalmadıysa
-   * boş PDF oluşturmak yerine hata ver.
-   */
   if (
     groupedBrands.length === 0
   ) {
@@ -673,7 +634,32 @@ export async function generateCatalogPDF(
   }
 
   // ─────────────────────────────────────────────────────────
-  // 6. Katalogda gerçekten kullanılacak ürünleri çıkar
+  // GERÇEK PDF SAYFA NUMARALARINI HESAPLA
+  // ─────────────────────────────────────────────────────────
+
+  /*
+   * Bu map bütün katalog yapısı üzerinden hesaplanır.
+   *
+   * Örnek:
+   *
+   * MERCEDES -> 10
+   * MAN      -> 57
+   * VOLVO    -> 96
+   *
+   * Marka dizini ve ürün chunk'ları aynı map'i kullanır.
+   */
+  const brandStartPages =
+    calculateBrandStartPages(
+      groupedBrands
+    );
+
+  console.log(
+    "[PDF] Marka başlangıç sayfaları:",
+    brandStartPages
+  );
+
+  // ─────────────────────────────────────────────────────────
+  // Katalog ürünlerini çıkar
   // ─────────────────────────────────────────────────────────
 
   const catalogProducts =
@@ -685,10 +671,6 @@ export async function generateCatalogPDF(
         )
     );
 
-  /*
-   * Bir ürün birden fazla marka altında bulunabileceği için
-   * QR ve görsel hazırlarken ID bazında tekilleştiriyoruz.
-   */
   const uniqueCatalogProducts =
     uniqueProductsById(
       catalogProducts
@@ -703,7 +685,7 @@ export async function generateCatalogPDF(
   );
 
   // ─────────────────────────────────────────────────────────
-  // 7. QR + görselleri paralel hazırla
+  // QR + görseller
   // ─────────────────────────────────────────────────────────
 
   await updateJobStatus(
@@ -729,10 +711,6 @@ export async function generateCatalogPDF(
     ),
   ]);
 
-  // ─────────────────────────────────────────────────────────
-  // Birleştirilecek PDF dosyaları
-  // ─────────────────────────────────────────────────────────
-
   const mergeFiles:
     string[] = [];
 
@@ -740,7 +718,7 @@ export async function generateCatalogPDF(
     string[] = [];
 
   // ─────────────────────────────────────────────────────────
-  // 8. Hazır giriş sayfaları
+  // Hazır giriş sayfaları
   // ─────────────────────────────────────────────────────────
 
   await updateJobStatus(
@@ -777,7 +755,7 @@ export async function generateCatalogPDF(
   }
 
   // ─────────────────────────────────────────────────────────
-  // 9. Marka dizini
+  // Marka dizini
   // ─────────────────────────────────────────────────────────
 
   await updateJobStatus(
@@ -787,11 +765,6 @@ export async function generateCatalogPDF(
     }
   );
 
-  /*
-   * Genel ürün adedinde aynı ürünün birden fazla marka
-   * nedeniyle tekrar sayılmaması için uniqueCatalogProducts
-   * gönderiyoruz.
-   */
   const indexStream =
     await renderToStream(
       getCoverAndIndexChunk(
@@ -822,7 +795,7 @@ export async function generateCatalogPDF(
   );
 
   // ─────────────────────────────────────────────────────────
-  // 10. Marka ürün sayfaları
+  // Marka ürün sayfaları
   // ─────────────────────────────────────────────────────────
 
   const RENDER_CONCURRENCY =
@@ -869,12 +842,36 @@ export async function generateCatalogPDF(
               `${hash}_chunk_prod_${globalIdx}`
             );
 
+          /*
+           * Bu markanın gerçek katalog
+           * başlangıç sayfasını al.
+           */
+          const startPageNumber =
+            brandStartPages[
+              brand.brand
+            ];
+
+          if (
+            !startPageNumber
+          ) {
+            throw new Error(
+              `${brand.brand} için başlangıç sayfası hesaplanamadı.`
+            );
+          }
+
+          /*
+           * ÖNEMLİ:
+           *
+           * Artık ProductPages 1'den başlamıyor.
+           * Gerçek PDF sayfasından başlıyor.
+           */
           const chunkStream =
             await renderToStream(
               getProductChunk(
                 [brand],
                 qrMap,
-                imgMap
+                imgMap,
+                startPageNumber
               ) as unknown as Parameters<
                 typeof renderToStream
               >[0]
@@ -886,10 +883,6 @@ export async function generateCatalogPDF(
             cPath
           );
 
-          /*
-           * Paralel render bitiş sırası farklı olsa bile
-           * gerçek marka sırası korunur.
-           */
           chunkPaths[
             globalIdx
           ] = cPath;
@@ -919,9 +912,10 @@ export async function generateCatalogPDF(
     );
   }
 
-  /*
-   * Chunk'ları marka sırasıyla ana PDF listesine ekle.
-   */
+  // ─────────────────────────────────────────────────────────
+  // Chunk'ları doğru marka sırasıyla ekle
+  // ─────────────────────────────────────────────────────────
+
   for (
     const cPath of
     chunkPaths
@@ -940,7 +934,7 @@ export async function generateCatalogPDF(
   }
 
   // ─────────────────────────────────────────────────────────
-  // 11. Bütün PDF'leri birleştir
+  // PDF'leri birleştir
   // ─────────────────────────────────────────────────────────
 
   await updateJobStatus(
@@ -956,7 +950,7 @@ export async function generateCatalogPDF(
   );
 
   // ─────────────────────────────────────────────────────────
-  // 12. Geçici dosyaları temizle
+  // Geçici dosyaları temizle
   // ─────────────────────────────────────────────────────────
 
   for (
@@ -974,15 +968,12 @@ export async function generateCatalogPDF(
         );
       }
     } catch {
-      /*
-       * Geçici dosya temizlenememesi
-       * PDF üretimini başarısız saymamalı.
-       */
+      // Temizlik hatası PDF üretimini durdurmaz.
     }
   }
 
   // ─────────────────────────────────────────────────────────
-  // 13. GitHub Releases'e yükle
+  // GitHub Releases
   // ─────────────────────────────────────────────────────────
 
   const isFiltered =
@@ -1003,10 +994,6 @@ export async function generateCatalogPDF(
       "GitHub Releases'e PDF yükleme başarısız oldu."
     );
   }
-
-  // ─────────────────────────────────────────────────────────
-  // 14. İş tamamlandı
-  // ─────────────────────────────────────────────────────────
 
   await updateJobStatus(
     jobId,
