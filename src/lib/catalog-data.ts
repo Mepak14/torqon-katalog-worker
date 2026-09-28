@@ -411,17 +411,8 @@ export function expandProductsByBrand(
 /**
  * Tüm aktif ürünleri getirir.
  *
- * ÖNEMLİ:
- *
- * Eski sistem:
- * 0-4999
- *
- * şeklinde sabit 5 batch çekiyordu.
- *
- * Yeni sistem veri bitene kadar 1000'er 1000'er
- * devam eder.
- *
- * Böylece 5000 ürün sınırı yoktur.
+ * Eski sistemde 5000 ürün sınırı vardı.
+ * Artık veri bitene kadar 1000'er ürün çekilir.
  */
 export async function getAllProducts(
   brands?: string[]
@@ -441,22 +432,7 @@ export async function getAllProducts(
     } = await supabase
       .from("products")
       .select(
-        [
-          "id",
-          "mepak_kodu",
-          "tanim_tr",
-          "tanim_en",
-          "marka_adi",
-          "markalar",
-          "oem_no",
-          "oem_nolari",
-          "model",
-          "model_yil",
-          "resim_kodlari",
-          "metadata",
-          "category",
-          "is_active",
-        ].join(",")
+        "id, mepak_kodu, tanim_tr, tanim_en, marka_adi, markalar, oem_no, oem_nolari, model, model_yil, resim_kodlari, metadata, category, is_active"
       )
       .eq(
         "is_active",
@@ -681,12 +657,6 @@ export function groupProductsByBrand(
 
             /*
              * Ürün kodlarını doğal sıra ile sırala.
-             *
-             * Örn:
-             * MM05.2
-             * MM05.10
-             *
-             * alfabetik terslik yaşamaz.
              */
             const sortedProducts =
               [...group.items].sort(
@@ -733,8 +703,7 @@ export function groupProductsByBrand(
               group
             ) =>
               total +
-              group.products
-                .length,
+              group.products.length,
             0
           ),
 
