@@ -1,108 +1,444 @@
-import { generateCatalogPDF } from "./PDFGeneratorService";
+import {
+  generateCatalogPDF,
+} from "./PDFGeneratorService";
+
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { supabaseAdmin } from "@/lib/supabase-admin";
+
+import {
+  supabaseAdmin,
+} from "@/lib/supabase-admin";
 
 type JobState = {
-  status: "pending" | "processing" | "done" | "error";
+  status:
+    | "pending"
+    | "processing"
+    | "done"
+    | "error";
+
   progress: number;
+
   file_url?: string;
+
   error?: string;
 };
 
+export type CatalogFilters = {
+  brands?: string[];
+  categories?: string[];
+};
+
 /**
- * Gets the status of a PDF generation job from Supabase.
+ * PDF üretim işinin güncel durumunu getirir.
  */
-export async function getJobStatus(jobId: string): Promise<JobState | null> {
-  const { data, error } = await supabaseAdmin
+export async function getJobStatus(
+  jobId: string
+): Promise<JobState | null> {
+  const {
+    data,
+    error,
+  } = await supabaseAdmin
     .from("pdf_jobs")
-    .select("status, progress, file_url, error")
-    .eq("id", jobId)
+    .select(
+      "status, progress, file_url, error"
+    )
+    .eq(
+      "id",
+      jobId
+    )
     .single();
 
-  if (error || !data) return null;
+  if (
+    error ||
+    !data
+  ) {
+    return null;
+  }
+
   return data as JobState;
 }
 
 /**
- * Updates the status of a PDF generation job in Supabase.
+ * PDF üretim işinin durumunu günceller.
  */
-export async function updateJobStatus(jobId: string, updates: Partial<JobState>) {
+export async function updateJobStatus(
+  jobId: string,
+  updates: Partial<JobState>
+): Promise<void> {
   await supabaseAdmin
     .from("pdf_jobs")
     .update(updates)
-    .eq("id", jobId);
+    .eq(
+      "id",
+      jobId
+    );
 }
 
 /**
- * Hash, Content (katalog verileri) + Filters bazlı oluşturulmaktadır.
+ * Katalog içeriğine göre benzersiz hash oluşturur.
+ *
+ * Hash artık şunlara bağlıdır:
+ *
+ * - ürünlerin son güncellenme tarihi
+ * - katalog filtreleri
+ * - marka sırası
+ * - kategori sırası
+ * - katalog ayar versiyonu
+ * - kategori aktif / pasif durumları
+ *
+ * Böylece sadece admin sıralaması veya kategori durumu
+ * değişse bile yeni PDF dosya adı oluşur.
  */
-export async function generateContentHash(filters: any): Promise<string> {
-  const { data } = await supabaseAdmin
-    .from("products")
-    .select("updated_at")
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .single();
+export async function generateContentHash(
+  filters: CatalogFilters
+): Promise<string> {
+  const [
+    productResult,
+    settingsResult,
+    categoriesResult,
+  ] = await Promise.all([
+    /*
+     * En son güncellenen ürün.
+     */
+    supabaseAdmin
+      .from("products")
+      .select("updated_at")
+      .order(
+        "updated_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(1)
+      .maybeSingle(),
 
-  const lastUpdate = data?.updated_at || "no-data";
-  const payload = JSON.stringify(filters) + "-catalog-production-" + lastUpdate;
-  return crypto.createHash("md5").update(payload).digest("hex");
+    /*
+     * PDF yapısını etkileyen katalog ayarları.
+     */
+    supabaseAdmin
+      .from("site_settings")
+      .select("key, value")
+      .in(
+        "key",
+        [
+          "catalog_settings_version",
+          "catalog_brand_order",
+          "catalog_category_order",
+        ]
+      ),
+
+    /*
+     * Aktif/pasif kategori değişiklikleri de
+     * PDF içeriğini değiştirdiği için hash'e dahil edilir.
+     */
+    supabaseAdmin
+      .from("categories")
+      .select(
+        "name, is_active"
+      ),
+  ]);
+
+  if (
+    productResult.error
+  ) {
+    console.warn(
+      "[PDF] Hash için ürün güncelleme tarihi okunamadı:",
+      productResult.error.message
+    );
+  }
+
+  if (
+    settingsResult.error
+  ) {
+    console.warn(
+      "[PDF] Hash için katalog ayarları okunamadı:",
+      settingsResult.error.message
+    );
+  }
+
+  if (
+    categoriesResult.error
+  ) {
+    console.warn(
+      "[PDF] Hash için kategori durumları okunamadı:",
+      categoriesResult.error.message
+    );
+  }
+
+  const lastProductUpdate =
+    productResult.data?.updated_at ||
+    "no-product-update";
+
+  /*
+   * Supabase dönüş sırası garanti olmadığı için
+   * hash'in gereksiz yere değişmemesi adına sıralıyoruz.
+   */
+  const settings =
+    [
+      ...(
+        settingsResult.data ||
+        []
+      ),
+    ].sort(
+      (a, b) =>
+        String(
+          a.key
+        ).localeCompare(
+          String(
+            b.key
+          ),
+          "tr"
+        )
+    );
+
+  const categories =
+    [
+      ...(
+        categoriesResult.data ||
+        []
+      ),
+    ]
+      .map(
+        (category) => ({
+          name:
+            String(
+              category.name ||
+                ""
+            )
+              .trim()
+              .toLocaleUpperCase(
+                "tr-TR"
+              ),
+
+          is_active:
+            category.is_active ===
+            true,
+        })
+      )
+      .sort(
+        (a, b) =>
+          a.name.localeCompare(
+            b.name,
+            "tr"
+          )
+      );
+
+  /*
+   * Filtre sırası değişse bile aynı filtreler
+   * aynı hash'i üretsin.
+   */
+  const normalizedFilters = {
+    brands:
+      [
+        ...(
+          filters?.brands ||
+          []
+        ),
+      ]
+        .map(
+          (item) =>
+            item
+              .trim()
+              .toLocaleUpperCase(
+                "tr-TR"
+              )
+        )
+        .filter(Boolean)
+        .sort(
+          (a, b) =>
+            a.localeCompare(
+              b,
+              "tr"
+            )
+        ),
+
+    categories:
+      [
+        ...(
+          filters?.categories ||
+          []
+        ),
+      ]
+        .map(
+          (item) =>
+            item
+              .trim()
+              .toLocaleUpperCase(
+                "tr-TR"
+              )
+        )
+        .filter(Boolean)
+        .sort(
+          (a, b) =>
+            a.localeCompare(
+              b,
+              "tr"
+            )
+        ),
+  };
+
+  const payload =
+    JSON.stringify({
+      version:
+        "catalog-production-v3",
+
+      filters:
+        normalizedFilters,
+
+      lastProductUpdate,
+
+      settings,
+
+      categories,
+    });
+
+  return crypto
+    .createHash("md5")
+    .update(payload)
+    .digest("hex");
 }
 
-/** Delete catalog PDFs older than 24 hours from the system temp directory. */
-function cleanOldPdfFiles() {
-  const tmpDir = os.tmpdir();
-  const maxAgeMs = 24 * 60 * 60 * 1000;
+/**
+ * 24 saatten eski geçici katalog PDF'lerini temizler.
+ */
+function cleanOldPdfFiles(): void {
+  const tmpDir =
+    os.tmpdir();
+
+  const maxAgeMs =
+    24 *
+    60 *
+    60 *
+    1000;
+
   try {
-    fs.readdirSync(tmpDir)
-      .filter((f) => f.startsWith("catalog_") && f.endsWith(".pdf"))
-      .forEach((f) => {
-        const filePath = path.join(tmpDir, f);
-        const stat = fs.statSync(filePath);
-        if (Date.now() - stat.mtimeMs > maxAgeMs) {
-          fs.unlinkSync(filePath);
+    fs.readdirSync(
+      tmpDir
+    )
+      .filter(
+        (file) =>
+          file.startsWith(
+            "catalog_"
+          ) &&
+          file.endsWith(
+            ".pdf"
+          )
+      )
+      .forEach(
+        (file) => {
+          const filePath =
+            path.join(
+              tmpDir,
+              file
+            );
+
+          const stat =
+            fs.statSync(
+              filePath
+            );
+
+          if (
+            Date.now() -
+              stat.mtimeMs >
+            maxAgeMs
+          ) {
+            fs.unlinkSync(
+              filePath
+            );
+          }
         }
-      });
+      );
   } catch {
-    // Non-fatal — cleanup best-effort
+    /*
+     * Geçici dosya temizleme hatası
+     * PDF üretimini engellemez.
+     */
   }
 }
 
-export async function startPdfJob(filters: any): Promise<string> {
+/**
+ * Yeni PDF oluşturma işi başlatır.
+ */
+export async function startPdfJob(
+  filters: CatalogFilters = {}
+): Promise<string> {
   cleanOldPdfFiles();
 
-  const contentHash = await generateContentHash(filters);
-  
-  // 1. Create job in Supabase
-  const { data: job, error } = await supabaseAdmin
+  const contentHash =
+    await generateContentHash(
+      filters
+    );
+
+  /*
+   * Job kaydını oluştur.
+   */
+  const {
+    data: job,
+    error,
+  } = await supabaseAdmin
     .from("pdf_jobs")
-    .insert([{ status: "pending", progress: 0 }])
+    .insert([
+      {
+        status: "pending",
+        progress: 0,
+      },
+    ])
     .select()
     .single();
 
-  if (error || !job) {
-    throw new Error("Failed to create PDF job in database");
+  if (
+    error ||
+    !job
+  ) {
+    throw new Error(
+      "PDF işi veritabanında oluşturulamadı."
+    );
   }
 
-  const jobId = job.id;
+  const jobId =
+    job.id;
 
-  // 2. Start generation in background
-  // Note: On Vercel, this might still time out if it takes too long.
-  // We trigger it without awaiting.
-  (async () => {
+  /*
+   * PDF oluşturmayı arka planda başlat.
+   */
+  void (async () => {
     try {
-      await updateJobStatus(jobId, { status: "processing", progress: 5 });
-      
-      // generation begins
-      await generateCatalogPDF(jobId, contentHash, filters);
-      
-      // Status is updated inside generateCatalogPDF to mark as 'done' with the URL
-    } catch (error: any) {
-      console.error("PDF Job Failed:", error);
-      await updateJobStatus(jobId, { status: "error", progress: 0, error: error.message });
+      await updateJobStatus(
+        jobId,
+        {
+          status:
+            "processing",
+
+          progress: 5,
+        }
+      );
+
+      await generateCatalogPDF(
+        jobId,
+        contentHash,
+        filters
+      );
+    } catch (error) {
+      console.error(
+        "[PDF] PDF işi başarısız:",
+        error
+      );
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Bilinmeyen hata";
+
+      await updateJobStatus(
+        jobId,
+        {
+          status: "error",
+          progress: 0,
+          error: message,
+        }
+      );
     }
   })();
 
