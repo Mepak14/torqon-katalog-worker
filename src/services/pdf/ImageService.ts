@@ -1,10 +1,11 @@
 import { Product } from "@/lib/catalog-data";
 
 const BATCH_SIZE = 40;
-const SITE_URL = (process.env.SITE_URL || "https://torqon.com.tr").replace(
-  /\/$/,
-  ""
-);
+
+const SITE_URL = (
+  process.env.SITE_URL ||
+  "https://torqon.com.tr"
+).replace(/\/$/, "");
 
 type ImageResult = {
   buf: Buffer;
@@ -12,79 +13,102 @@ type ImageResult = {
 };
 
 /**
- * resim_kodlari içinden kullanılacak ilk geçerli görsel adını alır.
- *
- * Örnek:
- * "MM05.10404.jpg,MM05.10404_2.jpg"
- * ->
- * "MM05.10404.jpg"
+ * resim_kodlari alanındaki bütün görsel
+ * dosyalarını sıralı şekilde ayırır.
  */
-function getFirstImageKey(
+function getImageKeys(
   value?: string | null
-): string | null {
-  const first = value
-    ?.split(/[,;|\n]+/)
-    .map((item) => item.trim())
-    .find(Boolean);
-
-  return first || null;
+): string[] {
+  return Array.from(
+    new Set(
+      (value || "")
+        .split(/[,;|\n]+/)
+        .map((item) =>
+          item.trim()
+        )
+        .filter(Boolean)
+    )
+  );
 }
 
 /**
- * Web sitesinin kullandığı aynı görsel API'sinden ürünü indirir.
- *
- * Bu endpoint Cloudflare R2'deki gerçek ürün görselini döndürür:
- * https://torqon.com.tr/api/gorsel/DOSYA_ADI
+ * Web sitesinin kullandığı R2 görsel
+ * endpoint'inden görsel indirir.
  */
 async function downloadImage(
   key: string
 ): Promise<ImageResult | null> {
   try {
     const url =
-      `${SITE_URL}/api/gorsel/${encodeURIComponent(key)}`;
+      `${SITE_URL}/api/gorsel/` +
+      encodeURIComponent(key);
 
-    const controller = new AbortController();
+    const controller =
+      new AbortController();
 
-    const timeout = setTimeout(() => {
-      controller.abort();
-    }, 15000);
+    const timeout =
+      setTimeout(
+        () =>
+          controller.abort(),
+        15000
+      );
 
     try {
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          "User-Agent": "Torqon-Catalog-PDF/1.0",
-          Accept: "image/*",
-        },
-      });
+      const response =
+        await fetch(url, {
+          signal:
+            controller.signal,
+
+          headers: {
+            "User-Agent":
+              "Torqon-Catalog-PDF/1.0",
+
+            Accept:
+              "image/*",
+          },
+        });
 
       if (!response.ok) {
         return null;
       }
 
       const contentType =
-        response.headers.get("content-type") ||
+        response.headers.get(
+          "content-type"
+        ) ||
         "image/jpeg";
 
-      if (!contentType.startsWith("image/")) {
+      if (
+        !contentType.startsWith(
+          "image/"
+        )
+      ) {
         return null;
       }
 
       const arrayBuffer =
         await response.arrayBuffer();
 
-      const buf = Buffer.from(arrayBuffer);
+      const buf =
+        Buffer.from(
+          arrayBuffer
+        );
 
-      if (buf.length === 0) {
+      if (
+        buf.length === 0
+      ) {
         return null;
       }
 
       return {
         buf,
-        mime: contentType,
+        mime:
+          contentType,
       };
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(
+        timeout
+      );
     }
   } catch {
     return null;
@@ -92,69 +116,62 @@ async function downloadImage(
 }
 
 /**
- * Ürün görsellerini PDF hazırlanırken toplu şekilde indirir.
+ * PDF için bütün ürün görsellerini hazırlar.
  *
- * Görseller doğrudan Supabase Storage'dan değil,
- * torqon.com.tr/api/gorsel üzerinden alınır.
+ * Önemli:
  *
- * Böylece PDF ile web sitesi aynı görsel kaynağını kullanır.
+ * resim_kodlari:
+ *
+ * a.jpg,b.jpg,c.jpg
+ *
+ * şeklindeyse bütün adaylar kontrol edilir.
+ *
+ * a.jpg yoksa,
+ * b.jpg varsa,
+ *
+ * b.jpg kullanılır.
+ *
+ * Yani ilk yazılan değil,
+ * ilk GEÇERLİ görsel kullanılır.
  */
 export async function prefetchProductImages(
   products: Product[]
 ): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+  const map =
+    new Map<string, string>();
 
-  /*
-   * ProductPages.tsx şu anda imgMap'i resim_kodlari'nın
-   * tamamıyla sorguladığı için hem ham değeri hem de
-   * ilk görsel kodunu saklıyoruz.
-   *
-   * Böylece:
-   *
-   * resim_kodlari =
-   * "MM05.10404.jpg,MM05.10404_2.jpg"
-   *
-   * hem:
-   * map.get("MM05.10404.jpg")
-   *
-   * hem:
-   * map.get("MM05.10404.jpg,MM05.10404_2.jpg")
-   *
-   * çalışır.
+  /**
+   * Her ürünün görsel adaylarını hazırla.
    */
-  const productImages = products
-    .map((product) => {
-      const raw =
-        product.resim_kodlari?.trim() || "";
+  const productImages =
+    products
+      .map((product) => {
+        const raw =
+          product
+            .resim_kodlari
+            ?.trim() ||
+          "";
 
-      const firstKey =
-        getFirstImageKey(
-          product.resim_kodlari
-        );
+        const keys =
+          getImageKeys(
+            product.resim_kodlari
+          );
 
-      return {
-        raw,
-        firstKey,
-      };
-    })
-    .filter(
-      (
-        item
-      ): item is {
-        raw: string;
-        firstKey: string;
-      } => !!item.firstKey
-    );
+        return {
+          raw,
+          keys,
+        };
+      })
+      .filter(
+        (item) =>
+          item.keys.length >
+          0
+      );
 
-  const uniqueKeys = [
-    ...new Set(
-      productImages.map(
-        (item) => item.firstKey
-      )
-    ),
-  ];
-
-  if (uniqueKeys.length === 0) {
+  if (
+    productImages.length ===
+    0
+  ) {
     console.log(
       "[PDF] Ürün görseli bulunamadı."
     );
@@ -162,50 +179,79 @@ export async function prefetchProductImages(
     return map;
   }
 
+  /**
+   * Tüm görsel adaylarını tekilleştir.
+   *
+   * Böylece aynı görsel yüzlerce üründe
+   * kullanılıyorsa yalnızca bir kez indirilir.
+   */
+  const uniqueKeys =
+    Array.from(
+      new Set(
+        productImages.flatMap(
+          (item) =>
+            item.keys
+        )
+      )
+    );
+
   console.log(
-    `[PDF] ${uniqueKeys.length} farklı ürün görseli hazırlanıyor...`
+    `[PDF] ${uniqueKeys.length} farklı görsel adayı kontrol ediliyor...`
   );
 
-  /*
-   * Önce gerçek dosya adına göre indirilen görselleri
-   * burada saklıyoruz.
+  /**
+   * Başarıyla indirilen görseller.
    */
   const downloaded =
-    new Map<string, string>();
+    new Map<
+      string,
+      string
+    >();
 
+  /**
+   * Görselleri batch halinde indir.
+   */
   for (
     let i = 0;
-    i < uniqueKeys.length;
+    i <
+    uniqueKeys.length;
     i += BATCH_SIZE
   ) {
     const batch =
       uniqueKeys.slice(
         i,
-        i + BATCH_SIZE
+        i +
+          BATCH_SIZE
       );
 
     await Promise.all(
-      batch.map(async (key) => {
-        const result =
-          await downloadImage(key);
+      batch.map(
+        async (key) => {
+          const result =
+            await downloadImage(
+              key
+            );
 
-        if (!result) {
-          return;
+          if (!result) {
+            return;
+          }
+
+          const dataUrl =
+            `data:${result.mime};base64,` +
+            result.buf.toString(
+              "base64"
+            );
+
+          downloaded.set(
+            key,
+            dataUrl
+          );
         }
-
-        const dataUrl =
-          `data:${result.mime};base64,` +
-          result.buf.toString("base64");
-
-        downloaded.set(
-          key,
-          dataUrl
-        );
-      })
+      )
     );
 
     console.log(
-      `[PDF] Görsel ilerleme: ` +
+      `[PDF] Görsel kontrolü: ` +
         `${Math.min(
           i + BATCH_SIZE,
           uniqueKeys.length
@@ -213,25 +259,92 @@ export async function prefetchProductImages(
     );
   }
 
-  /*
-   * ProductPages mevcut yapısıyla uyumlu olması için
-   * iki farklı anahtarla kaydet.
-   */
-  for (const item of productImages) {
-    const dataUrl =
-      downloaded.get(item.firstKey);
+  let productsWithImage =
+    0;
 
-    if (!dataUrl) {
+  let productsWithoutImage =
+    0;
+
+  /**
+   * Her ürün için aday görselleri
+   * sırayla kontrol et.
+   *
+   * İlk bulunan geçerli görsel kullanılır.
+   */
+  for (
+    const item of
+    productImages
+  ) {
+    const firstKey =
+      item.keys[0];
+
+    let selectedKey:
+      string | undefined;
+
+    for (
+      const key of
+      item.keys
+    ) {
+      if (
+        downloaded.has(key)
+      ) {
+        selectedKey =
+          key;
+
+        break;
+      }
+    }
+
+    if (!selectedKey) {
+      productsWithoutImage++;
       continue;
     }
 
-    // İlk görsel kodu
+    const dataUrl =
+      downloaded.get(
+        selectedKey
+      );
+
+    if (!dataUrl) {
+      productsWithoutImage++;
+      continue;
+    }
+
+    productsWithImage++;
+
+    /**
+     * Gerçek seçilen dosya adı.
+     */
     map.set(
-      item.firstKey,
+      selectedKey,
       dataUrl
     );
 
-    // DB'deki resim_kodlari'nın tamamı
+    /**
+     * ProductPages.tsx ilk görsel kodunu
+     * aradığı için ilk anahtarı da seçilen
+     * geçerli görsele yönlendiriyoruz.
+     *
+     * Örnek:
+     *
+     * a.jpg yok
+     * b.jpg var
+     *
+     * map.get("a.jpg")
+     *
+     * yine b.jpg görselini döndürür.
+     */
+    if (firstKey) {
+      map.set(
+        firstKey,
+        dataUrl
+      );
+    }
+
+    /**
+     * Eski kullanım biçimiyle de uyumlu kalması
+     * için ham resim_kodlari değerini ekle.
+     */
     if (item.raw) {
       map.set(
         item.raw,
@@ -240,16 +353,10 @@ export async function prefetchProductImages(
     }
   }
 
-  const missing =
-    uniqueKeys.length -
-    downloaded.size;
-
   console.log(
     `[PDF] Görsel hazırlama tamamlandı: ` +
-      `${downloaded.size}/${uniqueKeys.length} başarılı` +
-      (missing > 0
-        ? `, ${missing} görsel bulunamadı.`
-        : ".")
+      `${productsWithImage} ürün görselli, ` +
+      `${productsWithoutImage} ürün için geçerli görsel bulunamadı.`
   );
 
   return map;
