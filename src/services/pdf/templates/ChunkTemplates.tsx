@@ -1,6 +1,11 @@
 import React from "react";
 import { Document } from "@react-pdf/renderer";
-import { BrandGroup, Product } from "@/lib/catalog-data";
+
+import {
+  BrandGroup,
+  Product,
+} from "@/lib/catalog-data";
+
 import { BrandIndexPages } from "./BrandIndexPage";
 import { ProductPages } from "./ProductPages";
 
@@ -9,32 +14,52 @@ const BRANDS_PER_INDEX_PAGE = 21;
 const PRODUCTS_PER_PAGE = 4;
 
 /**
- * Her markanın katalogdaki gerçek başlangıç sayfasını hesaplar.
+ * Marka dizininin kaç sayfa süreceğini hesaplar.
  *
- * Katalog sırası:
- * 1-5   → hazır giriş PDF'leri
- * 6...  → marka dizini
- * sonra → marka ayraç + ürün sayfaları
+ * 21 marka = 1 sayfa
+ * 22 marka = 2 sayfa
+ * vb.
  */
-function calculateBrandStartPages(
+export function calculateBrandIndexPageCount(
   groupedBrands: BrandGroup[]
-): Record<string, number> {
-  const brandStartPages: Record<string, number> = {};
-
-  const indexPageCount = Math.max(
+): number {
+  return Math.max(
     1,
     Math.ceil(
       groupedBrands.length /
         BRANDS_PER_INDEX_PAGE
     )
   );
+}
+
+/**
+ * Her markanın katalogdaki gerçek başlangıç
+ * sayfasını hesaplar.
+ *
+ * Örnek:
+ *
+ * 1-5  → giriş sayfaları
+ * 6-9  → marka dizini
+ * 10   → ilk marka ayraç sayfası
+ * 11   → ilk ürün sayfası
+ */
+export function calculateBrandStartPages(
+  groupedBrands: BrandGroup[]
+): Record<string, number> {
+  const brandStartPages:
+    Record<string, number> = {};
+
+  const indexPageCount =
+    calculateBrandIndexPageCount(
+      groupedBrands
+    );
 
   /*
-   * İlk marka:
+   * İlk marka ayraç sayfası:
    *
-   * 5 intro sayfası
-   * + marka dizini sayfaları
-   * + 1
+   * intro +
+   * marka dizini +
+   * 1
    */
   let currentPage =
     INTRO_PAGE_COUNT +
@@ -42,27 +67,35 @@ function calculateBrandStartPages(
     1;
 
   for (const brand of groupedBrands) {
-    brandStartPages[brand.brand] =
-      currentPage;
+    /*
+     * Bu sayı markanın AYRAÇ sayfasıdır.
+     */
+    brandStartPages[
+      brand.brand
+    ] = currentPage;
 
     /*
-     * Her markada:
+     * Markanın ürün sayfalarını hesapla.
      *
-     * 1 marka ayraç sayfası
-     * +
-     * her kategori için ürün sayfaları
+     * Her sayfada maksimum 4 ürün bulunur.
      */
     const productPageCount =
       brand.groups.reduce(
-        (total, group) =>
-          total +
-          Math.ceil(
-            group.products.length /
-              PRODUCTS_PER_PAGE
-          ),
+        (total, group) => {
+          return (
+            total +
+            Math.ceil(
+              group.products.length /
+                PRODUCTS_PER_PAGE
+            )
+          );
+        },
         0
       );
 
+    /*
+     * +1 = marka ayraç sayfası
+     */
     currentPage +=
       1 + productPageCount;
   }
@@ -71,10 +104,11 @@ function calculateBrandStartPages(
 }
 
 /**
- * Marka dizini chunk'ı.
+ * Marka dizini PDF chunk'ı.
  *
- * Intro PDF'ler PDFGeneratorService tarafından
- * daha sonra bunun önüne eklenir.
+ * Hazır 1.pdf - 5.pdf dosyaları
+ * PDFGeneratorService tarafından bunun
+ * önüne eklenir.
  */
 export const getCoverAndIndexChunk = (
   products: Product[],
@@ -97,12 +131,28 @@ export const getCoverAndIndexChunk = (
 };
 
 /**
- * Marka + ürün sayfaları chunk'ı.
+ * Marka + ürün sayfaları PDF chunk'ı.
+ *
+ * startPageNumber:
+ * Bu markanın gerçek katalog başlangıç
+ * sayfasıdır.
+ *
+ * Örneğin marka ayraç sayfası 37 ise:
+ *
+ * startPageNumber = 37
+ *
+ * ProductPages:
+ * ayraç -> 37
+ * ilk ürün sayfası -> 38
+ * ikinci ürün sayfası -> 39
+ *
+ * şeklinde devam eder.
  */
 export const getProductChunk = (
   groupedBrands: BrandGroup[],
   qrMap: Map<string, string>,
-  imgMap: Map<string, string>
+  imgMap: Map<string, string>,
+  startPageNumber = 1
 ) => {
   return (
     <Document>
@@ -110,6 +160,7 @@ export const getProductChunk = (
         groupedBrands,
         qrMap,
         imgMap,
+        startPageNumber,
       })}
     </Document>
   );
