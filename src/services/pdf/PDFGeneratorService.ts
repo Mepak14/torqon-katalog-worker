@@ -1,220 +1,1022 @@
 import { renderToStream } from "@react-pdf/renderer";
-import { getCoverAndIndexChunk, getProductChunk } from "./templates/ChunkTemplates";
-import { groupProductsByBrand } from "@/lib/catalog-data";
+import {
+  getCoverAndIndexChunk,
+  getProductChunk,
+} from "./templates/ChunkTemplates";
+
+import {
+  groupProductsByBrand,
+  extractCategoryFromTanim,
+  DEFAULT_CATEGORY_ORDER,
+} from "@/lib/catalog-data";
+
 import type { Product } from "@/lib/types";
+
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { execSync } from "child_process";
+
 import { registerServerFonts } from "./FontService";
 import { mergePdfChunks } from "./PDFMergeFallback";
 import { generateQRMapForProducts } from "./QRService";
 import { prefetchProductImages } from "./ImageService";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { updateJobStatus } from "./JobQueue";
-import { execSync } from "child_process";
+
+// ─────────────────────────────────────────────────────────────
+// Sabitler
+// ─────────────────────────────────────────────────────────────
+
+const KATALOG_DIR = path.join(
+  process.cwd(),
+  "public",
+  "katalog"
+);
+
+const INTRO_COUNT = 5;
+const DB_PAGE_SIZE = 1000;
+
+type CatalogFilters = {
+  brands?: string[];
+  categories?: string[];
+};
+
+type CatalogSettings = {
+  brandOrder: string[];
+  categoryOrder: string[];
+};
+
+// ─────────────────────────────────────────────────────────────
+// Yardımcı fonksiyonlar
+// ─────────────────────────────────────────────────────────────
+
+function normalizeKey(
+  value?: string | null
+): string {
+  return (value || "")
+    .trim()
+    .toLocaleUpperCase("tr-TR");
+}
+
+function parseStringArray(
+  value?: string | null,
+  fallback: readonly string[] = []
+): string[] {
+  if (!value) {
+    return [...fallback];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+
+    if (!Array.isArray(parsed)) {
+      return [...fallback];
+    }
+
+    return Array.from(
+      new Set(
+        parsed
+          .filter(
+            (item): item is string =>
+              typeof item === "string"
+          )
+          .map(normalizeKey)
+          .filter(Boolean)
+      )
+    );
+  } catch {
+    return [...fallback];
+  }
+}
+
+function getTempFilePath(
+  hash: string
+): string {
+  return path.join(
+    os.tmpdir(),
+    `catalog_${hash}.pdf`
+  );
+}
+
+function streamToFile(
+  stream: NodeJS.ReadableStream,
+  filePath: string
+): Promise<void> {
+  return new Promise(
+    (resolve, reject) => {
+      const fileStream =
+        fs.createWriteStream(
+          filePath
+        );
+
+      stream.pipe(fileStream);
+
+      fileStream.on(
+        "finish",
+        resolve
+      );
+
+      fileStream.on(
+        "error",
+        reject
+      );
+    }
+  );
+}
 
 /**
- * Üretilen PDF'yi GitHub Releases'e yükler ve public URL döner.
+ * Aynı ürün birden fazla markada bulunabileceği için
+ * PDF görsel/QR hazırlama aşamasında aynı ID'yi
+ * tekrar tekrar işlememek için tekilleştirir.
  */
+function uniqueProductsById(
+  products: Product[]
+): Product[] {
+  const map =
+    new Map<string, Product>();
+
+  for (const product of products) {
+    if (!map.has(product.id)) {
+      map.set(
+        product.id,
+        product
+      );
+    }
+  }
+
+  return [...map.values()];
+}
+
+// ─────────────────────────────────────────────────────────────
+// Admin katalog ayarları
+// ─────────────────────────────────────────────────────────────
+
+async function fetchCatalogSettings():
+  Promise<CatalogSettings> {
+  const { data, error } =
+    await supabaseAdmin
+      .from("site_settings")
+      .select("key, value");
+
+  if (error) {
+    throw new Error(
+      `Katalog ayarları okunamadı: ${error.message}`
+    );
+  }
+
+  const settings:
+    Record<string, string> = {};
+
+  for (const row of data || []) {
+    if (
+      typeof row.key === "string" &&
+      typeof row.value === "string"
+    ) {
+      settings[row.key] =
+        row.value;
+    }
+  }
+
+  return {
+    brandOrder:
+      parseStringArray(
+        settings.catalog_brand_order
+      ),
+
+    categoryOrder:
+      parseStringArray(
+        settings.catalog_category_order,
+        DEFAULT_CATEGORY_ORDER
+      ),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Aktif kategoriler
+// ─────────────────────────────────────────────────────────────
+
+async function fetchActiveCategories():
+  Promise<Set<string>> {
+  const { data, error } =
+    await supabaseAdmin
+      .from("categories")
+      .select("name")
+      .eq(
+        "is_active",
+        true
+      );
+
+  if (error) {
+    throw new Error(
+      `Aktif kategoriler okunamadı: ${error.message}`
+    );
+  }
+
+  return new Set(
+    (data || [])
+      .map((row) =>
+        normalizeKey(row.name)
+      )
+      .filter(Boolean)
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Tüm aktif ürünleri çek
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Eski sistemde:
+ *
+ * 0-999
+ * 1000-1999
+ * ...
+ * 4000-4999
+ *
+ * şeklinde sabit 5000 ürün sınırı vardı.
+ *
+ * Artık veri bitene kadar 1000'er ürün çekilir.
+ */
+async function fetchAllProducts():
+  Promise<Product[]> {
+  const rows: Product[] = [];
+
+  for (
+    let from = 0;
+    ;
+    from += DB_PAGE_SIZE
+  ) {
+    const {
+      data,
+      error,
+    } = await supabaseAdmin
+      .from("products")
+      .select(
+        [
+          "id",
+          "mepak_kodu",
+          "tanim_tr",
+          "tanim_en",
+          "marka_adi",
+          "markalar",
+          "oem_no",
+          "oem_nolari",
+          "model",
+          "model_yil",
+          "resim_kodlari",
+          "metadata",
+          "category",
+          "is_active",
+        ].join(",")
+      )
+
+      // PDF'de sadece aktif ürünler
+      .eq(
+        "is_active",
+        true
+      )
+
+      .range(
+        from,
+        from +
+          DB_PAGE_SIZE -
+          1
+      )
+
+      .order(
+        "mepak_kodu",
+        {
+          ascending: true,
+        }
+      );
+
+    if (error) {
+      throw new Error(
+        `Ürünler okunamadı: ${error.message}`
+      );
+    }
+
+    const batch =
+      (data || []) as Product[];
+
+    rows.push(...batch);
+
+    console.log(
+      `[PDF] Ürün yükleme: ${rows.length}`
+    );
+
+    /*
+     * Son sayfa 1000'den az geldiyse
+     * bütün ürünler alınmıştır.
+     */
+    if (
+      batch.length <
+      DB_PAGE_SIZE
+    ) {
+      break;
+    }
+  }
+
+  return rows;
+}
+
+// ─────────────────────────────────────────────────────────────
+// GitHub Releases yükleme
+// ─────────────────────────────────────────────────────────────
+
 async function uploadToGitHubReleases(
   filePath: string,
   hash: string,
   isFiltered: boolean
 ): Promise<string | null> {
   try {
-    const baseName = isFiltered ? "torqon_ozel_katalog" : "torqon_katalog";
-    const fileName = `${baseName}_${hash}.pdf`;
-    const finalPath = path.join(path.dirname(filePath), fileName);
-    
-    // Dosya adını hashli haliye değiştir
-    fs.renameSync(filePath, finalPath);
+    const baseName =
+      isFiltered
+        ? "torqon_ozel_katalog"
+        : "torqon_katalog";
 
-    console.log("[PDF] GitHub Releases'e yükleniyor...");
+    const fileName =
+      `${baseName}_${hash}.pdf`;
 
-    // 1. Önce 'catalogs' adında bir release var mı kontrol et, yoksa oluştur
+    const finalPath =
+      path.join(
+        path.dirname(filePath),
+        fileName
+      );
+
+    fs.renameSync(
+      filePath,
+      finalPath
+    );
+
+    console.log(
+      "[PDF] GitHub Releases'e yükleniyor..."
+    );
+
+    /*
+     * catalogs release yoksa oluştur.
+     */
     try {
-      execSync(`gh release view catalogs`, { stdio: "ignore" });
+      execSync(
+        "gh release view catalogs",
+        {
+          stdio: "ignore",
+        }
+      );
     } catch {
-      console.log("[PDF] Release bulunamadı, oluşturuluyor...");
-      execSync(`gh release create catalogs --title "Kataloglar" --notes "Sistem tarafından otomatik üretilen kataloglar"`, { stdio: "inherit" });
+      console.log(
+        "[PDF] catalogs release bulunamadı, oluşturuluyor..."
+      );
+
+      execSync(
+        'gh release create catalogs --title "Kataloglar" --notes "Sistem tarafından otomatik üretilen kataloglar"',
+        {
+          stdio: "inherit",
+        }
+      );
     }
 
-    // 2. Dosyayı bu release'e yükle (varsa üzerine yazar --clobber)
-    execSync(`gh release upload catalogs "${finalPath}" --clobber`, { stdio: "inherit" });
+    /*
+     * Yeni PDF'yi yükle.
+     */
+    execSync(
+      `gh release upload catalogs "${finalPath}" --clobber`,
+      {
+        stdio: "inherit",
+      }
+    );
 
-    // 3. Eski PDF dosyalarını temizle (Sadece aynı kategorideki eski dosyaları sil)
+    /*
+     * Aynı katalog tipindeki eski PDF'leri kaldır.
+     */
     try {
-      console.log(`[PDF] Eski ${baseName} dosyaları temizleniyor...`);
-      const assetsJson = execSync(`gh release view catalogs --json assets`, { encoding: "utf-8" });
-      const releaseData = JSON.parse(assetsJson);
-      
-      if (releaseData && Array.isArray(releaseData.assets)) {
-        for (const asset of releaseData.assets) {
-          const assetName = asset.name;
-          // Eğer aynı baseName ile başlıyorsa ve yeni ürettiğimiz dosya değilse sil
-          // (torqon_katalog_ vs torqon_ozel_katalog_)
-          if (assetName.startsWith(baseName + "_") && assetName.endsWith(".pdf") && assetName !== fileName) {
-            console.log(`[PDF] Eski asset siliniyor: ${assetName}`);
-            execSync(`gh release delete-asset catalogs "${assetName}" -y`, { stdio: "ignore" });
+      console.log(
+        `[PDF] Eski ${baseName} dosyaları temizleniyor...`
+      );
+
+      const assetsJson =
+        execSync(
+          "gh release view catalogs --json assets",
+          {
+            encoding:
+              "utf-8",
+          }
+        );
+
+      const releaseData =
+        JSON.parse(
+          assetsJson
+        );
+
+      if (
+        releaseData &&
+        Array.isArray(
+          releaseData.assets
+        )
+      ) {
+        for (
+          const asset of
+          releaseData.assets
+        ) {
+          const assetName =
+            asset.name;
+
+          if (
+            typeof assetName ===
+              "string" &&
+            assetName.startsWith(
+              `${baseName}_`
+            ) &&
+            assetName.endsWith(
+              ".pdf"
+            ) &&
+            assetName !==
+              fileName
+          ) {
+            console.log(
+              `[PDF] Eski asset siliniyor: ${assetName}`
+            );
+
+            execSync(
+              `gh release delete-asset catalogs "${assetName}" -y`,
+              {
+                stdio:
+                  "ignore",
+              }
+            );
           }
         }
       }
-    } catch (cleanupErr: any) {
-      console.error("[PDF] Eski PDF'leri temizlerken hata oluştu:", cleanupErr.message);
+    } catch (cleanupError) {
+      const message =
+        cleanupError instanceof
+        Error
+          ? cleanupError.message
+          : "Bilinmeyen hata";
+
+      console.error(
+        "[PDF] Eski PDF temizleme hatası:",
+        message
+      );
     }
 
-    // 3. GitHub public download URL'ini dön
-    // Format: https://github.com/OWNER/REPO/releases/download/TAG/FILE_NAME
-    const repo = process.env.GITHUB_REPO; // örn: erencettin/mepak-katalog
-    if (!repo) throw new Error("GITHUB_REPO env bulunamadı");
+    const repo =
+      process.env.GITHUB_REPO;
 
-    return `https://github.com/${repo}/releases/download/catalogs/${fileName}`;
-  } catch (err: any) {
-    console.error("[PDF] GitHub Releases upload hatası:", err.message);
+    if (!repo) {
+      throw new Error(
+        "GITHUB_REPO environment değişkeni bulunamadı."
+      );
+    }
+
+    return (
+      `https://github.com/` +
+      `${repo}/releases/download/catalogs/${fileName}`
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Bilinmeyen hata";
+
+    console.error(
+      "[PDF] GitHub Releases upload hatası:",
+      message
+    );
+
     return null;
   }
 }
 
-async function fetchAllProducts(brands?: string[]): Promise<Product[]> {
-  const ranges: [number, number][] = [
-    [0, 999], [1000, 1999], [2000, 2999], [3000, 3999], [4000, 4999],
-  ];
-  const results = await Promise.all(
-    ranges.map(([from, to]) => {
-      let q = supabaseAdmin
-        .from("products")
-        .select("id, mepak_kodu, tanim_tr, tanim_en, marka_adi, oem_no, model, model_yil, resim_kodlari")
-        .range(from, to)
-        .order("marka_adi", { ascending: true })
-        .order("mepak_kodu", { ascending: true });
-      if (brands && brands.length > 0) q = q.in("marka_adi", brands);
-      return q;
-    })
-  );
-  return results.flatMap((r) => (r.data || []) as Product[]);
-}
-
-const KATALOG_DIR = path.join(process.cwd(), "public", "katalog");
-const INTRO_COUNT = 5;
-
-function getTempFilePath(hash: string): string {
-  return path.join(os.tmpdir(), `catalog_${hash}.pdf`);
-}
-
-function streamToFile(stream: NodeJS.ReadableStream, filePath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const fileStream = fs.createWriteStream(filePath);
-    stream.pipe(fileStream);
-    fileStream.on("finish", resolve);
-    fileStream.on("error", reject);
-  });
-}
+// ─────────────────────────────────────────────────────────────
+// Katalog oluşturma
+// ─────────────────────────────────────────────────────────────
 
 export async function generateCatalogPDF(
   jobId: string,
   hash: string,
-  filters?: { brands?: string[] }
+  filters?: CatalogFilters
 ): Promise<string> {
-  const finalFilePath = getTempFilePath(hash);
+  const finalFilePath =
+    getTempFilePath(hash);
 
+  /*
+   * Fontlar yalnızca PDF oluşturulurken
+   * kaydedilir.
+   */
   registerServerFonts();
 
-  // ─── 1. Ürünleri çek ─────────────────────────────────────────────────────
-  await updateJobStatus(jobId, { progress: 5 });
-  const products = await fetchAllProducts(filters?.brands);
-  const groupedBrands = groupProductsByBrand(products);
+  // ─────────────────────────────────────────────────────────
+  // 1. Ürün + ayar + kategori bilgilerini paralel çek
+  // ─────────────────────────────────────────────────────────
 
-  // ─── 2+3. QR kodları + görsel indirme — paralel başlat ─────────────────────
-  // İkisi birbirinden tamamen bağımsız Map üretiyor; birinin sonucu diğerini
-  // hiçbir şekilde etkilemez. PDF'e ulaştığında her ikisi hazır halde gelir.
-  await updateJobStatus(jobId, { progress: 8 });
-  const [qrMap, imgMap] = await Promise.all([
-    generateQRMapForProducts(products.map((p) => p.id)),
-    prefetchProductImages(products),
+  await updateJobStatus(
+    jobId,
+    {
+      progress: 5,
+    }
+  );
+
+  const [
+    allProducts,
+    catalogSettings,
+    activeCategories,
+  ] = await Promise.all([
+    fetchAllProducts(),
+    fetchCatalogSettings(),
+    fetchActiveCategories(),
   ]);
 
-  // mergeFiles: birleştirilecek tüm PDF yolları (sırayla)
-  // tempFiles:  işlem sonrası silinecek geçici dosyalar
-  const mergeFiles: string[] = [];
-  const tempFiles: string[] = [];
-
-  // ─── 4. Intro PDF'leri (1.pdf → 5.pdf) ──────────────────────────────────
-  await updateJobStatus(jobId, { progress: 12 });
-  for (let i = 1; i <= INTRO_COUNT; i++) {
-    const introPath = path.join(KATALOG_DIR, `${i}.pdf`);
-    if (fs.existsSync(introPath)) {
-      mergeFiles.push(introPath); // kaynak dosya — silinmez
-    } else {
-      console.warn(`[PDF] Intro PDF bulunamadı: ${i}.pdf`);
-    }
-  }
-
-  // ─── 5. Marka listesi (brand index) chunk ────────────────────────────────
-  await updateJobStatus(jobId, { progress: 15 });
-  const indexStream = await renderToStream(
-    getCoverAndIndexChunk(products, groupedBrands) as any
+  console.log(
+    `[PDF] Aktif ürün: ${allProducts.length}`
   );
-  const indexPath = getTempFilePath(`${hash}_chunk_index`);
-  await streamToFile(indexStream as unknown as NodeJS.ReadableStream, indexPath);
-  mergeFiles.push(indexPath);
-  tempFiles.push(indexPath);
 
-  // ─── 6. Marka ürün sayfaları — paralel render, sıra korumalı ──────────────
-  //
-  // • RENDER_CONCURRENCY marka aynı anda render edilir → toplam süre ~4x kısalır.
-  // • chunkPaths[globalIdx] ile dosya yolu index'e bağlanarak yazılır,
-  //   böylece paralel tamamlansa da mergeFiles sırası (marka sırası) kesinlikle
-  //   korunur — PDF sayfa düzeni bozulmaz.
-  const RENDER_CONCURRENCY = 4;
-  // Önceden boyutlandırılmış dizi: her index keşinlikle tek bir üretici tarafından yazılır.
-  const chunkPaths: string[] = new Array(groupedBrands.length).fill("");
+  console.log(
+    `[PDF] Aktif kategori: ${activeCategories.size}`
+  );
 
-  for (let batchStart = 0; batchStart < groupedBrands.length; batchStart += RENDER_CONCURRENCY) {
-    const batchEnd = Math.min(batchStart + RENDER_CONCURRENCY, groupedBrands.length);
-    const batchSlice = groupedBrands.slice(batchStart, batchEnd);
+  // ─────────────────────────────────────────────────────────
+  // 2. Pasif kategorilerdeki ürünleri çıkar
+  // ─────────────────────────────────────────────────────────
 
-    await Promise.all(
-      batchSlice.map(async (brand, offsetInBatch) => {
-        const globalIdx = batchStart + offsetInBatch;
-        const cPath = getTempFilePath(`${hash}_chunk_prod_${globalIdx}`);
-        const chunkStream = await renderToStream(
-          getProductChunk([brand], qrMap, imgMap) as any
+  const activeProducts =
+    allProducts.filter(
+      (product) => {
+        const category =
+          extractCategoryFromTanim(
+            product.tanim_tr
+          ) ||
+          normalizeKey(
+            product.category
+          );
+
+        if (!category) {
+          return false;
+        }
+
+        return activeCategories.has(
+          normalizeKey(
+            category
+          )
         );
-        await streamToFile(chunkStream as unknown as NodeJS.ReadableStream, cPath);
-        // Index sabitleme: paralel yazılsa da sıra garanti.
-        chunkPaths[globalIdx] = cPath;
-      })
+      }
     );
 
-    // Batch tamamlandıktan sonra ilerleme güncelle (DB çağrı sayısını azaltır).
-    const progressVal = Math.floor(15 + (batchEnd / groupedBrands.length) * 78);
-    await updateJobStatus(jobId, { progress: Math.min(progressVal, 93) });
+  console.log(
+    `[PDF] Aktif kategori filtresinden sonra ürün: ${activeProducts.length}`
+  );
+
+  // ─────────────────────────────────────────────────────────
+  // 3. Admin marka ve kategori sırasını uygula
+  // ─────────────────────────────────────────────────────────
+
+  let groupedBrands =
+    groupProductsByBrand(
+      activeProducts,
+      catalogSettings.brandOrder,
+      catalogSettings.categoryOrder
+    );
+
+  // ─────────────────────────────────────────────────────────
+  // 4. Özel katalog marka filtresi
+  // ─────────────────────────────────────────────────────────
+
+  if (
+    filters?.brands &&
+    filters.brands.length > 0
+  ) {
+    const selectedBrands =
+      new Set(
+        filters.brands
+          .map(normalizeKey)
+          .filter(Boolean)
+      );
+
+    groupedBrands =
+      groupedBrands.filter(
+        (brand) =>
+          selectedBrands.has(
+            normalizeKey(
+              brand.brand
+            )
+          )
+      );
   }
 
-  // Sıralı diziden mergeFiles + tempFiles'a aktar (marka sırası korunur).
-  for (const cPath of chunkPaths) {
-    if (cPath) {
-      mergeFiles.push(cPath);
-      tempFiles.push(cPath);
+  // ─────────────────────────────────────────────────────────
+  // 5. Özel katalog kategori filtresi
+  // ─────────────────────────────────────────────────────────
+
+  if (
+    filters?.categories &&
+    filters.categories.length > 0
+  ) {
+    const selectedCategories =
+      new Set(
+        filters.categories
+          .map(normalizeKey)
+          .filter(Boolean)
+      );
+
+    groupedBrands =
+      groupedBrands
+        .map((brand) => {
+          const groups =
+            brand.groups.filter(
+              (group) =>
+                selectedCategories.has(
+                  normalizeKey(
+                    group.groupName
+                  )
+                )
+            );
+
+          return {
+            ...brand,
+
+            groups,
+
+            groupCount:
+              groups.length,
+
+            productCount:
+              groups.reduce(
+                (
+                  total,
+                  group
+                ) =>
+                  total +
+                  group.products
+                    .length,
+                0
+              ),
+          };
+        })
+        .filter(
+          (brand) =>
+            brand.groups.length >
+            0
+        );
+  }
+
+  /*
+   * Filtrelerden sonra marka kalmadıysa
+   * boş PDF oluşturmak yerine hata ver.
+   */
+  if (
+    groupedBrands.length === 0
+  ) {
+    throw new Error(
+      "PDF için uygun aktif ürün bulunamadı."
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // 6. Katalogda gerçekten kullanılacak ürünleri çıkar
+  // ─────────────────────────────────────────────────────────
+
+  const catalogProducts =
+    groupedBrands.flatMap(
+      (brand) =>
+        brand.groups.flatMap(
+          (group) =>
+            group.products
+        )
+    );
+
+  /*
+   * Bir ürün birden fazla marka altında bulunabileceği için
+   * QR ve görsel hazırlarken ID bazında tekilleştiriyoruz.
+   */
+  const uniqueCatalogProducts =
+    uniqueProductsById(
+      catalogProducts
+    );
+
+  console.log(
+    `[PDF] PDF marka sayısı: ${groupedBrands.length}`
+  );
+
+  console.log(
+    `[PDF] PDF benzersiz ürün sayısı: ${uniqueCatalogProducts.length}`
+  );
+
+  // ─────────────────────────────────────────────────────────
+  // 7. QR + görselleri paralel hazırla
+  // ─────────────────────────────────────────────────────────
+
+  await updateJobStatus(
+    jobId,
+    {
+      progress: 8,
+    }
+  );
+
+  const [
+    qrMap,
+    imgMap,
+  ] = await Promise.all([
+    generateQRMapForProducts(
+      uniqueCatalogProducts.map(
+        (product) =>
+          product.id
+      )
+    ),
+
+    prefetchProductImages(
+      uniqueCatalogProducts
+    ),
+  ]);
+
+  // ─────────────────────────────────────────────────────────
+  // Birleştirilecek PDF dosyaları
+  // ─────────────────────────────────────────────────────────
+
+  const mergeFiles:
+    string[] = [];
+
+  const tempFiles:
+    string[] = [];
+
+  // ─────────────────────────────────────────────────────────
+  // 8. Hazır giriş sayfaları
+  // ─────────────────────────────────────────────────────────
+
+  await updateJobStatus(
+    jobId,
+    {
+      progress: 12,
+    }
+  );
+
+  for (
+    let i = 1;
+    i <= INTRO_COUNT;
+    i++
+  ) {
+    const introPath =
+      path.join(
+        KATALOG_DIR,
+        `${i}.pdf`
+      );
+
+    if (
+      fs.existsSync(
+        introPath
+      )
+    ) {
+      mergeFiles.push(
+        introPath
+      );
+    } else {
+      console.warn(
+        `[PDF] Intro PDF bulunamadı: ${i}.pdf`
+      );
     }
   }
 
-  // ─── 7. Hepsini birleştir ─────────────────────────────────────────────────
-  await updateJobStatus(jobId, { progress: 95 });
-  await mergePdfChunks(mergeFiles, finalFilePath);
+  // ─────────────────────────────────────────────────────────
+  // 9. Marka dizini
+  // ─────────────────────────────────────────────────────────
 
-  // ─── 8. Ara geçici dosyaları temizle ─────────────────────────────────────
-  tempFiles.forEach((p) => { if (fs.existsSync(p)) fs.unlinkSync(p); });
+  await updateJobStatus(
+    jobId,
+    {
+      progress: 15,
+    }
+  );
 
-  // ─── 9. GitHub Releases'e yükle ──────────────────────────────────────────
-  const isFiltered = filters && Object.keys(filters).length > 0;
-  const downloadUrl = await uploadToGitHubReleases(finalFilePath, hash, !!isFiltered);
+  /*
+   * Genel ürün adedinde aynı ürünün birden fazla marka
+   * nedeniyle tekrar sayılmaması için uniqueCatalogProducts
+   * gönderiyoruz.
+   */
+  const indexStream =
+    await renderToStream(
+      getCoverAndIndexChunk(
+        uniqueCatalogProducts,
+        groupedBrands
+      ) as unknown as Parameters<
+        typeof renderToStream
+      >[0]
+    );
 
-  if (!downloadUrl) {
-    throw new Error("GitHub Releases'e yükleme başarısız oldu.");
+  const indexPath =
+    getTempFilePath(
+      `${hash}_chunk_index`
+    );
+
+  await streamToFile(
+    indexStream as unknown as
+      NodeJS.ReadableStream,
+    indexPath
+  );
+
+  mergeFiles.push(
+    indexPath
+  );
+
+  tempFiles.push(
+    indexPath
+  );
+
+  // ─────────────────────────────────────────────────────────
+  // 10. Marka ürün sayfaları
+  // ─────────────────────────────────────────────────────────
+
+  const RENDER_CONCURRENCY =
+    4;
+
+  const chunkPaths:
+    string[] =
+      new Array(
+        groupedBrands.length
+      ).fill("");
+
+  for (
+    let batchStart = 0;
+    batchStart <
+    groupedBrands.length;
+    batchStart +=
+      RENDER_CONCURRENCY
+  ) {
+    const batchEnd =
+      Math.min(
+        batchStart +
+          RENDER_CONCURRENCY,
+        groupedBrands.length
+      );
+
+    const batchSlice =
+      groupedBrands.slice(
+        batchStart,
+        batchEnd
+      );
+
+    await Promise.all(
+      batchSlice.map(
+        async (
+          brand,
+          offsetInBatch
+        ) => {
+          const globalIdx =
+            batchStart +
+            offsetInBatch;
+
+          const cPath =
+            getTempFilePath(
+              `${hash}_chunk_prod_${globalIdx}`
+            );
+
+          const chunkStream =
+            await renderToStream(
+              getProductChunk(
+                [brand],
+                qrMap,
+                imgMap
+              ) as unknown as Parameters<
+                typeof renderToStream
+              >[0]
+            );
+
+          await streamToFile(
+            chunkStream as unknown as
+              NodeJS.ReadableStream,
+            cPath
+          );
+
+          /*
+           * Paralel render bitiş sırası farklı olsa bile
+           * gerçek marka sırası korunur.
+           */
+          chunkPaths[
+            globalIdx
+          ] = cPath;
+        }
+      )
+    );
+
+    const progressVal =
+      Math.floor(
+        15 +
+          (
+            batchEnd /
+            groupedBrands.length
+          ) *
+            78
+      );
+
+    await updateJobStatus(
+      jobId,
+      {
+        progress:
+          Math.min(
+            progressVal,
+            93
+          ),
+      }
+    );
   }
 
-  await updateJobStatus(jobId, { status: "done", progress: 100, file_url: downloadUrl });
+  /*
+   * Chunk'ları marka sırasıyla ana PDF listesine ekle.
+   */
+  for (
+    const cPath of
+    chunkPaths
+  ) {
+    if (!cPath) {
+      continue;
+    }
+
+    mergeFiles.push(
+      cPath
+    );
+
+    tempFiles.push(
+      cPath
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // 11. Bütün PDF'leri birleştir
+  // ─────────────────────────────────────────────────────────
+
+  await updateJobStatus(
+    jobId,
+    {
+      progress: 95,
+    }
+  );
+
+  await mergePdfChunks(
+    mergeFiles,
+    finalFilePath
+  );
+
+  // ─────────────────────────────────────────────────────────
+  // 12. Geçici dosyaları temizle
+  // ─────────────────────────────────────────────────────────
+
+  for (
+    const tempFile of
+    tempFiles
+  ) {
+    try {
+      if (
+        fs.existsSync(
+          tempFile
+        )
+      ) {
+        fs.unlinkSync(
+          tempFile
+        );
+      }
+    } catch {
+      /*
+       * Geçici dosya temizlenememesi
+       * PDF üretimini başarısız saymamalı.
+       */
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // 13. GitHub Releases'e yükle
+  // ─────────────────────────────────────────────────────────
+
+  const isFiltered =
+    !!(
+      filters?.brands?.length ||
+      filters?.categories?.length
+    );
+
+  const downloadUrl =
+    await uploadToGitHubReleases(
+      finalFilePath,
+      hash,
+      isFiltered
+    );
+
+  if (!downloadUrl) {
+    throw new Error(
+      "GitHub Releases'e PDF yükleme başarısız oldu."
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // 14. İş tamamlandı
+  // ─────────────────────────────────────────────────────────
+
+  await updateJobStatus(
+    jobId,
+    {
+      status: "done",
+      progress: 100,
+      file_url:
+        downloadUrl,
+    }
+  );
 
   return downloadUrl;
 }
