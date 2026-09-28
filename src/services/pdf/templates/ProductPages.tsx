@@ -70,10 +70,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 900,
     color: C.navy,
-
-    // Başlıklardaki yapay karakter aralığını kaldır.
     letterSpacing: 0,
-
     lineHeight: 1.15,
   },
 
@@ -168,18 +165,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
 
-  /*
-   * ÖNEMLİ:
-   *
-   * Burada eskiden:
-   * letterSpacing: 1.5
-   *
-   * vardı.
-   *
-   * Bu yüzden MM05.10404 kodu PDF'de karakterleri
-   * birbirinden ayrılmış görünüyordu ve kopyalandığında
-   * sorun oluşturabiliyordu.
-   */
   codeBarCode: {
     fontSize: 12,
     fontWeight: 900,
@@ -355,15 +340,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  /*
-   * Font büyüklüğü marka adına göre aşağıdaki
-   * brandTitleSize() fonksiyonundan dinamik gelir.
-   */
   dividerBrandName: {
     fontWeight: 900,
     color: C.white,
     letterSpacing: 0,
     lineHeight: 1.05,
+    maxWidth: 275,
   },
 
   dividerAccent: {
@@ -372,15 +354,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#9ca3af",
     marginTop: 18,
     marginBottom: 18,
-  },
-
-  dividerSubline: {
-    fontSize: 10,
-    fontWeight: 400,
-    color: "rgba(255,255,255,0.55)",
-    lineHeight: 1.5,
-    letterSpacing: 0,
-    maxWidth: 280,
   },
 
   dividerStats: {
@@ -531,7 +504,8 @@ function formatYears(
     }`;
   }
 
-  const shown = parts.slice(0, 3);
+  const shown =
+    parts.slice(0, 3);
 
   const suffix =
     parts.length > 3
@@ -541,13 +515,8 @@ function formatYears(
   return shown.join(" · ") + suffix;
 }
 
-/*
+/**
  * Marka ayraç sayfasındaki büyük marka adı.
- *
- * Kısa isimler büyük,
- * uzun isimler kontrollü şekilde küçülür.
- *
- * Böylece marka ismi rastgele taşmaz.
  */
 function brandTitleSize(
   brand: string
@@ -555,30 +524,143 @@ function brandTitleSize(
   const length =
     brand.trim().length;
 
-  if (length <= 12) {
-    return 48;
+  if (length <= 10) {
+    return 44;
   }
 
-  if (length <= 18) {
-    return 40;
+  if (length <= 14) {
+    return 36;
   }
 
-  if (length <= 24) {
-    return 34;
+  if (length <= 20) {
+    return 30;
   }
 
-  if (length <= 30) {
-    return 29;
+  if (length <= 28) {
+    return 25;
   }
 
-  if (length <= 38) {
-    return 24;
+  if (length <= 36) {
+    return 21;
   }
 
-  return 20;
+  return 18;
 }
 
-/*
+/**
+ * Uzun marka adını kontrollü şekilde
+ * en fazla iki satıra böler.
+ *
+ * Örnek:
+ *
+ * MERCEDES-BENZ
+ *
+ * MERCEDES-
+ * BENZ
+ */
+function formatBrandTitle(
+  brand: string
+): string {
+  const clean =
+    brand.trim();
+
+  if (
+    clean.length <= 11
+  ) {
+    return clean;
+  }
+
+  /*
+   * Öncelikle tireli marka isimlerini
+   * tire noktasından iki satıra ayır.
+   */
+  const hyphenIndex =
+    clean.indexOf("-");
+
+  if (
+    hyphenIndex > 0 &&
+    hyphenIndex <
+      clean.length - 1
+  ) {
+    const left =
+      clean.slice(
+        0,
+        hyphenIndex + 1
+      );
+
+    const right =
+      clean.slice(
+        hyphenIndex + 1
+      );
+
+    return `${left}\n${right}`;
+  }
+
+  /*
+   * Boşluklu uzun isimlerde en dengeli
+   * boşluğu bulup iki satıra ayır.
+   */
+  const words =
+    clean.split(/\s+/);
+
+  if (
+    words.length > 1
+  ) {
+    let bestIndex = 1;
+    let bestDifference =
+      Number.MAX_SAFE_INTEGER;
+
+    for (
+      let i = 1;
+      i < words.length;
+      i++
+    ) {
+      const left =
+        words
+          .slice(0, i)
+          .join(" ");
+
+      const right =
+        words
+          .slice(i)
+          .join(" ");
+
+      const difference =
+        Math.abs(
+          left.length -
+            right.length
+        );
+
+      if (
+        difference <
+        bestDifference
+      ) {
+        bestDifference =
+          difference;
+        bestIndex = i;
+      }
+    }
+
+    return (
+      words
+        .slice(
+          0,
+          bestIndex
+        )
+        .join(" ") +
+      "\n" +
+      words
+        .slice(
+          bestIndex
+        )
+        .join(" ")
+    );
+  }
+
+  return clean;
+}
+
+/**
  * Ürün sayfasının sağ üstündeki marka adı.
  */
 function headerBrandSize(
@@ -602,7 +684,7 @@ function headerBrandSize(
   return 7.5;
 }
 
-/*
+/**
  * Sol üst kategori başlığı.
  */
 function groupTitleSize(
@@ -654,11 +736,21 @@ const BrandDividerPage = ({
       wrap={false}
     >
       <View
-        style={styles.dividerOrangeTop}
+        style={
+          styles.dividerOrangeTop
+        }
       />
 
-      <View style={styles.dividerBody}>
-        <View style={styles.dividerLeft}>
+      <View
+        style={
+          styles.dividerBody
+        }
+      >
+        <View
+          style={
+            styles.dividerLeft
+          }
+        >
           <View>
             <View
               style={
@@ -693,7 +785,9 @@ const BrandDividerPage = ({
                 },
               ]}
             >
-              {brandObj.brand}
+              {formatBrandTitle(
+                brandObj.brand
+              )}
             </Text>
 
             <View
@@ -701,24 +795,12 @@ const BrandDividerPage = ({
                 styles.dividerAccent
               }
             />
-
-            <Text
-              style={
-                styles.dividerSubline
-              }
-            >
-              Bu bölümde{" "}
-              {brandObj.brand} markasına
-              ait orijinal kalitede
-              direksiyon parçaları, ana
-              ürün gruplarına göre
-              sınıflandırılmıştır.
-            </Text>
           </View>
 
-          {/* Grup adedi kaldırıldı */}
           <View
-            style={styles.dividerStats}
+            style={
+              styles.dividerStats
+            }
           >
             <View
               style={
@@ -744,7 +826,11 @@ const BrandDividerPage = ({
           </View>
         </View>
 
-        <View style={styles.dividerRight}>
+        <View
+          style={
+            styles.dividerRight
+          }
+        >
           <Text
             style={
               styles.dividerIndexTitle
@@ -768,18 +854,25 @@ const BrandDividerPage = ({
                 >
                   {String(
                     idx + 1
-                  ).padStart(2, "0")}
+                  ).padStart(
+                    2,
+                    "0"
+                  )}
                 </Text>
 
                 <View
-                  style={{ flex: 1 }}
+                  style={{
+                    flex: 1,
+                  }}
                 >
                   <Text
                     style={
                       styles.dividerIndexName
                     }
                   >
-                    {group.groupName}
+                    {
+                      group.groupName
+                    }
                   </Text>
 
                   {group.groupNameEn ? (
@@ -819,7 +912,8 @@ const BrandDividerPage = ({
                 style={[
                   styles.dividerIndexName,
                   {
-                    color: C.orange,
+                    color:
+                      C.orange,
                   },
                 ]}
               >
@@ -856,10 +950,14 @@ const ProductCard = ({
   isLast?: boolean;
 }) => {
   const oemList =
-    splitValues(product.oem_no);
+    splitValues(
+      product.oem_no
+    );
 
   const modelList =
-    splitValues(product.model);
+    splitValues(
+      product.model
+    );
 
   return (
     <View
@@ -873,16 +971,24 @@ const ProductCard = ({
       }
     >
       <View
-        style={styles.cardImageCol}
+        style={
+          styles.cardImageCol
+        }
       >
         {imgDataUrl ? (
           <Image
-            style={styles.cardImg}
-            src={imgDataUrl}
+            style={
+              styles.cardImg
+            }
+            src={
+              imgDataUrl
+            }
           />
         ) : (
           <Text
-            style={styles.noImg}
+            style={
+              styles.noImg
+            }
           >
             GÖRSEL YOK
           </Text>
@@ -890,9 +996,15 @@ const ProductCard = ({
       </View>
 
       <View
-        style={styles.cardContent}
+        style={
+          styles.cardContent
+        }
       >
-        <View style={styles.codeBar}>
+        <View
+          style={
+            styles.codeBar
+          }
+        >
           <View
             style={
               styles.codeBarBadge
@@ -912,8 +1024,10 @@ const ProductCard = ({
               styles.codeBarCode
             }
           >
-            {product.mepak_kodu ||
-              "—"}
+            {
+              product.mepak_kodu ||
+              "—"
+            }
           </Text>
         </View>
 
@@ -923,10 +1037,14 @@ const ProductCard = ({
           }
         >
           <View
-            style={styles.infoArea}
+            style={
+              styles.infoArea
+            }
           >
             <View
-              style={styles.infoRow}
+              style={
+                styles.infoRow
+              }
             >
               <Text
                 style={
@@ -945,8 +1063,13 @@ const ProductCard = ({
                 0 ? (
                   <Text>
                     {oemList
-                      .slice(0, 4)
-                      .join(" · ")}
+                      .slice(
+                        0,
+                        4
+                      )
+                      .join(
+                        " · "
+                      )}
                   </Text>
                 ) : (
                   <Text
@@ -961,7 +1084,9 @@ const ProductCard = ({
             </View>
 
             <View
-              style={styles.infoRow}
+              style={
+                styles.infoRow
+              }
             >
               <Text
                 style={
@@ -980,8 +1105,13 @@ const ProductCard = ({
                 0 ? (
                   <Text>
                     {modelList
-                      .slice(0, 5)
-                      .join(" / ")}
+                      .slice(
+                        0,
+                        5
+                      )
+                      .join(
+                        " / "
+                      )}
                   </Text>
                 ) : (
                   <Text
@@ -1027,14 +1157,18 @@ const ProductCard = ({
           </View>
 
           <View
-            style={styles.qrBox}
+            style={
+              styles.qrBox
+            }
           >
             {qrDataUrl ? (
               <Image
                 style={
                   styles.qrImage
                 }
-                src={qrDataUrl}
+                src={
+                  qrDataUrl
+                }
               />
             ) : (
               <View
@@ -1076,14 +1210,22 @@ const ProductPage = ({
 }: {
   group: {
     groupName: string;
-    groupNameEn?: string | null;
+    groupNameEn?:
+      | string
+      | null;
   };
 
   brandName: string;
   chunk: Product[];
   pageNumber: number;
-  qrMap: Map<string, string>;
-  imgMap: Map<string, string>;
+  qrMap: Map<
+    string,
+    string
+  >;
+  imgMap: Map<
+    string,
+    string
+  >;
 }) => (
   <Page
     size="A4"
@@ -1092,12 +1234,20 @@ const ProductPage = ({
   >
     <Image
       src={SAYFA_DUZENI}
-      style={PAGE_BG_STYLE}
+      style={
+        PAGE_BG_STYLE
+      }
     />
 
-    <View style={styles.pageInner}>
+    <View
+      style={
+        styles.pageInner
+      }
+    >
       <View
-        style={styles.pageHeader}
+        style={
+          styles.pageHeader
+        }
       >
         <View
           style={
@@ -1115,7 +1265,9 @@ const ProductPage = ({
               },
             ]}
           >
-            {group.groupName}
+            {
+              group.groupName
+            }
           </Text>
 
           {group.groupNameEn && (
@@ -1124,7 +1276,9 @@ const ProductPage = ({
                 styles.groupNameEn
               }
             >
-              {group.groupNameEn}
+              {
+                group.groupNameEn
+              }
             </Text>
           )}
         </View>
@@ -1153,11 +1307,15 @@ const ProductPage = ({
       <View
         style={{
           flex: 1,
-          flexDirection: "column",
+          flexDirection:
+            "column",
         }}
       >
         {chunk.map(
-          (product, pIdx) => {
+          (
+            product,
+            pIdx
+          ) => {
             const imageKey =
               getFirstImageKey(
                 product.resim_kodlari
@@ -1166,10 +1324,14 @@ const ProductPage = ({
             return (
               <ProductCard
                 key={`prod-${pIdx}`}
-                product={product}
-                qrDataUrl={qrMap.get(
-                  product.id
-                )}
+                product={
+                  product
+                }
+                qrDataUrl={
+                  qrMap.get(
+                    product.id
+                  )
+                }
                 imgDataUrl={
                   imageKey
                     ? imgMap.get(
@@ -1179,7 +1341,8 @@ const ProductPage = ({
                 }
                 isLast={
                   pIdx ===
-                  chunk.length - 1
+                  chunk.length -
+                    1
                 }
               />
             );
@@ -1188,15 +1351,20 @@ const ProductPage = ({
       </View>
 
       <View
-        style={styles.footer}
+        style={
+          styles.footer
+        }
       >
         {LOGO_DATA && (
           <Image
-            src={LOGO_DATA}
+            src={
+              LOGO_DATA
+            }
             style={{
               width: 60,
               height: 20,
-              objectFit: "contain",
+              objectFit:
+                "contain",
             }}
           />
         )}
@@ -1210,7 +1378,9 @@ const ProductPage = ({
         </Text>
 
         <Text
-          style={styles.footerUrl}
+          style={
+            styles.footerUrl
+          }
         >
           www.torqon.com.tr
         </Text>
@@ -1229,39 +1399,60 @@ export const ProductPages = ({
   imgMap,
   startPageNumber = 1,
 }: {
-  groupedBrands: BrandGroup[];
-  qrMap: Map<string, string>;
-  imgMap: Map<string, string>;
-  startPageNumber?: number;
+  groupedBrands:
+    BrandGroup[];
+
+  qrMap: Map<
+    string,
+    string
+  >;
+
+  imgMap: Map<
+    string,
+    string
+  >;
+
+  startPageNumber?:
+    number;
 }) => {
   const pages:
-    React.ReactNode[] = [];
+    React.ReactNode[] =
+      [];
 
   let pageNumber =
     startPageNumber;
 
   groupedBrands.forEach(
-    (brandObj, brandIdx) => {
+    (
+      brandObj,
+      brandIdx
+    ) => {
       pages.push(
         <BrandDividerPage
           key={`divider-${brandIdx}`}
-          brandObj={brandObj}
+          brandObj={
+            brandObj
+          }
         />
       );
 
       pageNumber++;
 
       brandObj.groups.forEach(
-        (group, groupIdx) => {
+        (
+          group,
+          groupIdx
+        ) => {
           const chunks:
             Product[][] = [];
 
           for (
             let i = 0;
             i <
-            group.products.length;
+            group.products
+              .length;
             i +=
-            PRODUCTS_PER_PAGE
+              PRODUCTS_PER_PAGE
           ) {
             chunks.push(
               group.products.slice(
@@ -1280,16 +1471,24 @@ export const ProductPages = ({
               pages.push(
                 <ProductPage
                   key={`page-${brandIdx}-${groupIdx}-${chunkIdx}`}
-                  group={group}
+                  group={
+                    group
+                  }
                   brandName={
                     brandObj.brand
                   }
-                  chunk={chunk}
+                  chunk={
+                    chunk
+                  }
                   pageNumber={
                     pageNumber
                   }
-                  qrMap={qrMap}
-                  imgMap={imgMap}
+                  qrMap={
+                    qrMap
+                  }
+                  imgMap={
+                    imgMap
+                  }
                 />
               );
 
@@ -1301,5 +1500,9 @@ export const ProductPages = ({
     }
   );
 
-  return <>{pages}</>;
+  return (
+    <>
+      {pages}
+    </>
+  );
 };
