@@ -922,7 +922,7 @@ export async function generateCatalogPDF(
   // ─────────────────────────────────────────────────────────
 
   const RENDER_CONCURRENCY =
-    4;
+    8;
 
   const chunkPaths:
     string[] =
