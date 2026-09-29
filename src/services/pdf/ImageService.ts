@@ -5,7 +5,7 @@ import { Product } from "@/lib/catalog-data";
 const BATCH_SIZE = 20;
 
 const IMAGE_MAX_SIZE = 600;
-const JPEG_QUALITY = 50;
+const JPEG_QUALITY = 25;
 
 const SITE_URL = (
   process.env.SITE_URL ||
@@ -42,7 +42,7 @@ function getImageKeys(
  * - Maksimum 600x600 px yapılır.
  * - Küçük görseller büyütülmez.
  * - Transparan alanlar beyaz yapılır.
- * - JPEG kalite %50.
+ * - JPEG kalite %25.
  * - MozJPEG sıkıştırma kullanılır.
  * - Metadata çıktı dosyasına taşınmaz.
  */
