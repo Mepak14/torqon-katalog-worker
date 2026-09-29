@@ -2,9 +2,9 @@ import sharp from "sharp";
 
 import { Product } from "@/lib/catalog-data";
 
-const BATCH_SIZE = 50;
+const BATCH_SIZE = 100;
 
-const IMAGE_MAX_SIZE = 600;
+const IMAGE_MAX_SIZE = 450;
 const JPEG_QUALITY = 25;
 
 const SITE_URL = (
@@ -49,12 +49,15 @@ function getImageKeys(
 /**
  * İndirilen ürün görselini PDF için optimize eder.
  *
+ * Hız odaklı ayarlar:
+ *
  * - EXIF orientation uygulanır.
- * - Maksimum 600x600 px.
+ * - Maksimum 450x450 px.
  * - Küçük görseller büyütülmez.
  * - Transparan alanlar beyaz yapılır.
  * - JPEG kalite %25.
- * - MozJPEG sıkıştırma kullanılır.
+ * - MozJPEG kullanılmaz.
+ * - Progressive JPEG kullanılmaz.
  * - Metadata çıktı dosyasına taşınmaz.
  */
 async function optimizeImage(
@@ -92,15 +95,17 @@ async function optimizeImage(
         },
       })
 
+      /*
+       * Hız için MozJPEG kullanılmıyor.
+       *
+       * Standart libjpeg daha hızlı çalışır.
+       */
       .jpeg({
         quality:
           JPEG_QUALITY,
 
-        mozjpeg:
-          true,
-
         progressive:
-          true,
+          false,
 
         chromaSubsampling:
           "4:2:0",
@@ -217,7 +222,7 @@ async function downloadImage(
 }
 
 /**
- * Verilen görselleri 50'şerli
+ * Verilen görselleri 100'erli
  * paketler halinde indirip optimize eder.
  */
 async function downloadKeys(
@@ -252,8 +257,7 @@ async function downloadKeys(
         ) => {
           /*
            * Daha önce başarılı veya başarısız
-           * olarak kontrol edilen dosyayı
-           * tekrar indirme.
+           * kontrol edilen dosyayı tekrar işleme.
            */
           if (
             downloaded.has(
@@ -316,19 +320,12 @@ async function downloadKeys(
  *
  * Hız optimizasyonu:
  *
- * Eskiden bütün görsel adayları baştan
- * indiriliyor ve optimize ediliyordu.
- *
- * Artık:
- *
  * 1. Önce her ürünün ilk görseli denenir.
- * 2. İlk görseli bulunamayan ürünlerde
- *    ikinci görsel denenir.
- * 3. Gerekirse üçüncü ve sonraki
- *    görsellere geçilir.
+ * 2. İlk görsel bulunamazsa ikinci görsel denenir.
+ * 3. Gerekirse sonraki görsellere geçilir.
  *
- * Böylece PDF'de kullanılmayacak
- * görseller gereksiz yere indirilmez.
+ * Böylece PDF'de kullanılmayacak görseller
+ * gereksiz yere indirilmez.
  */
 export async function prefetchProductImages(
   products: Product[]
@@ -388,7 +385,7 @@ export async function prefetchProductImages(
   );
 
   console.log(
-    `[PDF] Görsel ayarları: maksimum ${IMAGE_MAX_SIZE}x${IMAGE_MAX_SIZE}px, JPEG kalite %${JPEG_QUALITY}, paralel işlem ${BATCH_SIZE}`
+    `[PDF] Görsel ayarları: maksimum ${IMAGE_MAX_SIZE}x${IMAGE_MAX_SIZE}px, JPEG kalite %${JPEG_QUALITY}, paralel işlem ${BATCH_SIZE}, hızlı JPEG`
   );
 
   const downloaded =
@@ -436,7 +433,7 @@ export async function prefetchProductImages(
    * tüm ürünlerin ilk görseli.
    *
    * candidateIndex 1:
-   * yalnızca görsel bulunamayanların
+   * yalnızca ilk görseli bulunamayanların
    * ikinci görseli.
    */
   for (
@@ -467,7 +464,7 @@ export async function prefetchProductImages(
 
     /*
      * Bu turda kontrol edilecek
-     * benzersiz dosyaları çıkar.
+     * benzersiz görseller.
      */
     const candidateKeys =
       Array.from(
@@ -493,8 +490,8 @@ export async function prefetchProductImages(
       );
 
     /*
-     * Önceden başarılı/başarısız kontrol
-     * edilmiş dosyaları tekrar işleme.
+     * Önceden başarılı veya başarısız
+     * kontrol edilen dosyaları tekrar işleme.
      */
     const keysToDownload =
       candidateKeys.filter(
@@ -528,8 +525,8 @@ export async function prefetchProductImages(
     }
 
     /*
-     * Bu turda başarılı bulunan
-     * görselleri ürünlere bağla.
+     * Başarılı bulunan görselleri
+     * ürünlere bağla.
      */
     for (
       const item of
@@ -565,7 +562,7 @@ export async function prefetchProductImages(
 
     /*
      * Bütün ürünlere görsel bulunduysa
-     * sonraki adaylara bakmaya gerek yok.
+     * sonraki adaylara bakma.
      */
     if (
       remaining ===
@@ -624,8 +621,8 @@ export async function prefetchProductImages(
 
     /*
      * ProductPages ilk görsel anahtarını
-     * aradığı için ilk anahtarı da
-     * bulunan geçerli görsele yönlendir.
+     * aradığı için ilk anahtarı da seçilen
+     * geçerli görsele yönlendir.
      */
     const firstKey =
       item.keys[0];
