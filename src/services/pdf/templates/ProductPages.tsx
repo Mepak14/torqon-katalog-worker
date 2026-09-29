@@ -1,16 +1,24 @@
 import React from "react";
+
 import {
   Page,
   Text,
   View,
   StyleSheet,
   Image,
+  Link,
 } from "@react-pdf/renderer";
 
 import {
   BrandGroup,
   Product,
 } from "@/lib/catalog-data";
+
+import {
+  PRODUCTS_PER_PAGE,
+  PAGE_LINK_PREFIX,
+  normalizeProductCode,
+} from "../ProductLinks";
 
 import {
   SAYFA_DUZENI,
@@ -32,7 +40,6 @@ const C = {
   textLight: "#94a3b8",
 };
 
-const PRODUCTS_PER_PAGE = 4;
 const CARD_GAP = 8;
 
 const styles = StyleSheet.create({
@@ -123,10 +130,41 @@ const styles = StyleSheet.create({
     padding: 8,
   },
 
+  imageArea: {
+    flex: 1,
+    width: "100%",
+    minHeight: 0,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
   cardImg: {
     width: "100%",
     height: "100%",
     objectFit: "contain",
+  },
+
+  relations: {
+    width: "100%",
+    marginTop: 4,
+    paddingTop: 3,
+    borderTopWidth: 1,
+    borderTopColor: C.borderLight,
+    flexShrink: 0,
+  },
+
+  relation: {
+    fontSize: 6,
+    lineHeight: 1.35,
+    color: C.textMid,
+    letterSpacing: 0,
+    marginTop: 2,
+  },
+
+  relationLink: {
+    color: C.navy,
+    fontWeight: 900,
+    textDecoration: "underline",
   },
 
   noImg: {
@@ -310,7 +348,7 @@ const styles = StyleSheet.create({
   },
 
   dividerBody: {
-    flex: 1,
+    flex: 1.3,
     flexDirection: "row",
   },
 
@@ -452,67 +490,181 @@ function splitValues(
 ): string[] {
   return (value || "")
     .split(/[\n,;]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+    .map(
+      (s) =>
+        s.trim()
+    )
+    .filter(
+      Boolean
+    );
 }
 
 function getFirstImageKey(
   value?: string | null
 ): string | undefined {
   return value
-    ?.split(/[,;|\n]+/)
-    .map((item) => item.trim())
-    .find(Boolean);
+    ?.split(
+      /[,;|\n]+/
+    )
+    .map(
+      (
+        item
+      ) =>
+        item.trim()
+    )
+    .find(
+      Boolean
+    );
+}
+
+function splitRelationCodes(
+  value?: string | null
+): string[] {
+  return (
+    value || ""
+  )
+    .split(
+      /[,;|\n]+/
+    )
+    .map(
+      (
+        code
+      ) =>
+        code.trim()
+    )
+    .filter(
+      (
+        code
+      ) =>
+        Boolean(
+          code
+        ) &&
+        !/^[\s.\-]+$/.test(
+          code
+        )
+    );
+}
+
+function validQuantity(
+  value?: string | null
+): string {
+  const quantity =
+    (
+      value || ""
+    ).trim();
+
+  if (
+    !quantity ||
+    /^[\s.\-]+$/.test(
+      quantity
+    )
+  ) {
+    return "";
+  }
+
+  return quantity;
 }
 
 function formatYears(
   value?: string | null
 ): string {
-  const raw = (value || "").trim();
+  const raw =
+    (
+      value ||
+      ""
+    ).trim();
 
   if (!raw) {
     return "";
   }
 
-  const parts = raw
-    .split(/[\n,;]+/)
-    .map((s) => s.trim())
-    .filter(
-      (s) =>
-        s.length > 0 &&
-        !/^[\-\.\s]+$/.test(s)
-    );
+  const parts =
+    raw
+      .split(
+        /[\n,;]+/
+      )
+      .map(
+        (
+          s
+        ) =>
+          s.trim()
+      )
+      .filter(
+        (
+          s
+        ) =>
+          s.length >
+            0 &&
+          !/^[\-\.\s]+$/.test(
+            s
+          )
+      );
 
-  if (parts.length === 0) {
+  if (
+    parts.length ===
+    0
+  ) {
     return "";
   }
 
-  const allYears = parts.every(
-    (p) => /^\d{4}$/.test(p)
-  );
+  const allYears =
+    parts.every(
+      (
+        p
+      ) =>
+        /^\d{4}$/.test(
+          p
+        )
+    );
 
   if (
     allYears &&
-    parts.length > 2
+    parts.length >
+      2
   ) {
-    const nums = parts
-      .map(Number)
-      .sort((a, b) => a - b);
+    const nums =
+      parts
+        .map(
+          Number
+        )
+        .sort(
+          (
+            a,
+            b
+          ) =>
+            a -
+            b
+        );
 
     return `${nums[0]} – ${
-      nums[nums.length - 1]
+      nums[
+        nums.length -
+          1
+      ]
     }`;
   }
 
   const shown =
-    parts.slice(0, 3);
+    parts.slice(
+      0,
+      3
+    );
 
   const suffix =
-    parts.length > 3
-      ? ` +${parts.length - 3}`
+    parts.length >
+    3
+      ? ` +${
+          parts.length -
+          3
+        }`
       : "";
 
-  return shown.join(" · ") + suffix;
+  return (
+    shown.join(
+      " · "
+    ) +
+    suffix
+  );
 }
 
 /**
@@ -522,25 +674,41 @@ function brandTitleSize(
   brand: string
 ): number {
   const length =
-    brand.trim().length;
+    brand.trim()
+      .length;
 
-  if (length <= 10) {
+  if (
+    length <=
+    10
+  ) {
     return 44;
   }
 
-  if (length <= 14) {
+  if (
+    length <=
+    14
+  ) {
     return 36;
   }
 
-  if (length <= 20) {
+  if (
+    length <=
+    20
+  ) {
     return 30;
   }
 
-  if (length <= 28) {
+  if (
+    length <=
+    28
+  ) {
     return 25;
   }
 
-  if (length <= 36) {
+  if (
+    length <=
+    36
+  ) {
     return 21;
   }
 
@@ -550,13 +718,6 @@ function brandTitleSize(
 /**
  * Uzun marka adını kontrollü şekilde
  * en fazla iki satıra böler.
- *
- * Örnek:
- *
- * MERCEDES-BENZ
- *
- * MERCEDES-
- * BENZ
  */
 function formatBrandTitle(
   brand: string
@@ -565,65 +726,79 @@ function formatBrandTitle(
     brand.trim();
 
   if (
-    clean.length <= 11
+    clean.length <=
+    11
   ) {
     return clean;
   }
 
-  /*
-   * Öncelikle tireli marka isimlerini
-   * tire noktasından iki satıra ayır.
-   */
   const hyphenIndex =
-    clean.indexOf("-");
+    clean.indexOf(
+      "-"
+    );
 
   if (
-    hyphenIndex > 0 &&
+    hyphenIndex >
+      0 &&
     hyphenIndex <
-      clean.length - 1
+      clean.length -
+        1
   ) {
     const left =
       clean.slice(
         0,
-        hyphenIndex + 1
+        hyphenIndex +
+          1
       );
 
     const right =
       clean.slice(
-        hyphenIndex + 1
+        hyphenIndex +
+          1
       );
 
     return `${left}\n${right}`;
   }
 
-  /*
-   * Boşluklu uzun isimlerde en dengeli
-   * boşluğu bulup iki satıra ayır.
-   */
   const words =
-    clean.split(/\s+/);
+    clean.split(
+      /\s+/
+    );
 
   if (
-    words.length > 1
+    words.length >
+    1
   ) {
-    let bestIndex = 1;
+    let bestIndex =
+      1;
+
     let bestDifference =
       Number.MAX_SAFE_INTEGER;
 
     for (
       let i = 1;
-      i < words.length;
+      i <
+      words.length;
       i++
     ) {
       const left =
         words
-          .slice(0, i)
-          .join(" ");
+          .slice(
+            0,
+            i
+          )
+          .join(
+            " "
+          );
 
       const right =
         words
-          .slice(i)
-          .join(" ");
+          .slice(
+            i
+          )
+          .join(
+            " "
+          );
 
       const difference =
         Math.abs(
@@ -637,7 +812,9 @@ function formatBrandTitle(
       ) {
         bestDifference =
           difference;
-        bestIndex = i;
+
+        bestIndex =
+          i;
       }
     }
 
@@ -647,13 +824,17 @@ function formatBrandTitle(
           0,
           bestIndex
         )
-        .join(" ") +
+        .join(
+          " "
+        ) +
       "\n" +
       words
         .slice(
           bestIndex
         )
-        .join(" ")
+        .join(
+          " "
+        )
     );
   }
 
@@ -667,17 +848,27 @@ function headerBrandSize(
   brand: string
 ): number {
   const length =
-    brand.trim().length;
+    brand.trim()
+      .length;
 
-  if (length <= 14) {
+  if (
+    length <=
+    14
+  ) {
     return 11;
   }
 
-  if (length <= 22) {
+  if (
+    length <=
+    22
+  ) {
     return 9.5;
   }
 
-  if (length <= 30) {
+  if (
+    length <=
+    30
+  ) {
     return 8.5;
   }
 
@@ -691,17 +882,27 @@ function groupTitleSize(
   title: string
 ): number {
   const length =
-    title.trim().length;
+    title.trim()
+      .length;
 
-  if (length <= 18) {
+  if (
+    length <=
+    18
+  ) {
     return 14;
   }
 
-  if (length <= 28) {
+  if (
+    length <=
+    28
+  ) {
     return 12.5;
   }
 
-  if (length <= 40) {
+  if (
+    length <=
+    40
+  ) {
     return 11;
   }
 
@@ -712,422 +913,492 @@ function groupTitleSize(
 // Marka ayraç sayfası
 // ─────────────────────────────────────────────────────────────
 
-const BrandDividerPage = ({
-  brandObj,
-}: {
-  brandObj: BrandGroup;
-}) => {
-  const MAX_INDEX = 16;
+const BrandDividerPage =
+  ({
+    brandObj,
+  }: {
+    brandObj:
+      BrandGroup;
+  }) => {
+    const MAX_INDEX =
+      16;
 
-  const visibleGroups =
-    brandObj.groups.slice(
-      0,
-      MAX_INDEX
-    );
+    const visibleGroups =
+      brandObj.groups.slice(
+        0,
+        MAX_INDEX
+      );
 
-  const extraCount =
-    brandObj.groups.length -
-    visibleGroups.length;
+    const extraCount =
+      brandObj.groups
+        .length -
+      visibleGroups.length;
 
-  return (
-    <Page
-      size="A4"
-      style={styles.dividerPage}
-      wrap={false}
-    >
-      <View
+    return (
+      <Page
+        size="A4"
         style={
-          styles.dividerOrangeTop
+          styles.dividerPage
         }
-      />
-
-      <View
-        style={
-          styles.dividerBody
+        wrap={
+          false
         }
       >
         <View
           style={
-            styles.dividerLeft
+            styles.dividerOrangeTop
+          }
+        />
+
+        <View
+          style={
+            styles.dividerBody
           }
         >
-          <View>
-            <View
-              style={
-                styles.dividerBrandBadge
-              }
-            >
-              <Text
+          <View
+            style={
+              styles.dividerLeft
+            }
+          >
+            <View>
+              <View
                 style={
-                  styles.dividerBrandBadgeText
+                  styles.dividerBrandBadge
                 }
               >
-                BRAND · MARKA
+                <Text
+                  style={
+                    styles.dividerBrandBadgeText
+                  }
+                >
+                  BRAND ·
+                  MARKA
+                </Text>
+              </View>
+
+              <Text
+                style={
+                  styles.dividerEyebrow
+                }
+              >
+                TORQON
+                PARTS
               </Text>
+
+              <Text
+                style={[
+                  styles.dividerBrandName,
+                  {
+                    fontSize:
+                      brandTitleSize(
+                        brandObj.brand
+                      ),
+                  },
+                ]}
+              >
+                {formatBrandTitle(
+                  brandObj.brand
+                )}
+              </Text>
+
+              <View
+                style={
+                  styles.dividerAccent
+                }
+              />
             </View>
-
-            <Text
-              style={
-                styles.dividerEyebrow
-              }
-            >
-              TORQON PARTS
-            </Text>
-
-            <Text
-              style={[
-                styles.dividerBrandName,
-                {
-                  fontSize:
-                    brandTitleSize(
-                      brandObj.brand
-                    ),
-                },
-              ]}
-            >
-              {formatBrandTitle(
-                brandObj.brand
-              )}
-            </Text>
 
             <View
               style={
-                styles.dividerAccent
+                styles.dividerStats
               }
-            />
+            >
+              <View
+                style={
+                  styles.dividerStatItem
+                }
+              >
+                <Text
+                  style={
+                    styles.dividerStatNum
+                  }
+                >
+                  {
+                    brandObj.productCount
+                  }
+                </Text>
+
+                <Text
+                  style={
+                    styles.dividerStatLbl
+                  }
+                >
+                  ÜRÜN ·
+                  PRODUCTS
+                </Text>
+              </View>
+            </View>
           </View>
 
           <View
             style={
-              styles.dividerStats
+              styles.dividerRight
             }
           >
-            <View
+            <Text
               style={
-                styles.dividerStatItem
+                styles.dividerIndexTitle
               }
             >
-              <Text
-                style={
-                  styles.dividerStatNum
-                }
-              >
-                {brandObj.productCount}
-              </Text>
+              ÜRÜN
+              GRUPLARI ·
+              GROUPS
+            </Text>
 
-              <Text
-                style={
-                  styles.dividerStatLbl
-                }
-              >
-                ÜRÜN · PRODUCTS
-              </Text>
-            </View>
-          </View>
-        </View>
+            {visibleGroups.map(
+              (
+                group,
+                idx
+              ) => (
+                <View
+                  key={`di-${idx}`}
+                  style={
+                    styles.dividerIndexRow
+                  }
+                >
+                  <Text
+                    style={
+                      styles.dividerIndexNo
+                    }
+                  >
+                    {String(
+                      idx +
+                        1
+                    ).padStart(
+                      2,
+                      "0"
+                    )}
+                  </Text>
 
-        <View
-          style={
-            styles.dividerRight
-          }
-        >
-          <Text
-            style={
-              styles.dividerIndexTitle
-            }
-          >
-            ÜRÜN GRUPLARI · GROUPS
-          </Text>
+                  <View
+                    style={{
+                      flex: 1,
+                    }}
+                  >
+                    <Text
+                      style={
+                        styles.dividerIndexName
+                      }
+                    >
+                      {
+                        group.groupName
+                      }
+                    </Text>
 
-          {visibleGroups.map(
-            (group, idx) => (
+                    {group.groupNameEn ? (
+                      <Text
+                        style={
+                          styles.dividerIndexSub
+                        }
+                      >
+                        {
+                          group.groupNameEn
+                        }
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+              )
+            )}
+
+            {extraCount >
+              0 && (
               <View
-                key={`di-${idx}`}
-                style={
-                  styles.dividerIndexRow
-                }
+                style={[
+                  styles.dividerIndexRow,
+                  {
+                    marginTop:
+                      6,
+                  },
+                ]}
               >
                 <Text
                   style={
                     styles.dividerIndexNo
                   }
                 >
-                  {String(
-                    idx + 1
-                  ).padStart(
-                    2,
-                    "0"
-                  )}
+                  +
                 </Text>
 
-                <View
-                  style={{
-                    flex: 1,
-                  }}
-                >
-                  <Text
-                    style={
-                      styles.dividerIndexName
-                    }
-                  >
+                <Text
+                  style={[
+                    styles.dividerIndexName,
                     {
-                      group.groupName
-                    }
-                  </Text>
-
-                  {group.groupNameEn ? (
-                    <Text
-                      style={
-                        styles.dividerIndexSub
-                      }
-                    >
-                      {
-                        group.groupNameEn
-                      }
-                    </Text>
-                  ) : null}
-                </View>
-              </View>
-            )
-          )}
-
-          {extraCount > 0 && (
-            <View
-              style={[
-                styles.dividerIndexRow,
-                {
-                  marginTop: 6,
-                },
-              ]}
-            >
-              <Text
-                style={
-                  styles.dividerIndexNo
-                }
-              >
-                +
-              </Text>
-
-              <Text
-                style={[
-                  styles.dividerIndexName,
+                      color:
+                        C.orange,
+                    },
+                  ]}
+                >
                   {
-                    color:
-                      C.orange,
-                  },
-                ]}
-              >
-                {extraCount} diğer ürün
-                grubu
-              </Text>
-            </View>
-          )}
+                    extraCount
+                  }{" "}
+                  diğer
+                  ürün
+                  grubu
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
-      </View>
 
-      <View
-        style={
-          styles.dividerOrangeBottom
-        }
-      />
-    </Page>
-  );
-};
+        <View
+          style={
+            styles.dividerOrangeBottom
+          }
+        />
+      </Page>
+    );
+  };
 
 // ─────────────────────────────────────────────────────────────
 // Ürün kartı
 // ─────────────────────────────────────────────────────────────
 
-const ProductCard = ({
-  product,
-  qrDataUrl,
-  imgDataUrl,
-  isLast,
-}: {
-  product: Product;
-  qrDataUrl?: string;
-  imgDataUrl?: string;
-  isLast?: boolean;
-}) => {
-  const oemList =
-    splitValues(
-      product.oem_no
-    );
+const ProductCard =
+  ({
+    product,
+    qrDataUrl,
+    imgDataUrl,
+    isLast,
+    productPages,
+  }: {
+    product:
+      Product;
 
-  const modelList =
-    splitValues(
-      product.model
-    );
+    qrDataUrl?:
+      string;
 
-  return (
-    <View
-      style={
-        isLast
-          ? [
-              styles.card,
-              styles.cardLast,
-            ]
-          : styles.card
-      }
-    >
+    imgDataUrl?:
+      string;
+
+    isLast?:
+      boolean;
+
+    productPages:
+      Record<
+        string,
+        number
+      >;
+  }) => {
+    const oemList =
+      splitValues(
+        product.oem_no
+      );
+
+    const modelList =
+      splitValues(
+        product.model
+      );
+
+    const relations =
+      [
+        ...splitRelationCodes(
+          product.cift_parca_no
+        ).map(
+          (
+            code
+          ) => ({
+            label:
+              "ÜRÜN ÇİFTİ",
+
+            code,
+
+            quantity:
+              "",
+          })
+        ),
+
+        ...splitRelationCodes(
+          product.alt_bilesen_1
+        ).map(
+          (
+            code
+          ) => ({
+            label:
+              "BİLEŞEN",
+
+            code,
+
+            quantity:
+              validQuantity(
+                product.alt_bilesen_1_miktar
+              ),
+          })
+        ),
+
+        ...splitRelationCodes(
+          product.alt_bilesen_2
+        ).map(
+          (
+            code
+          ) => ({
+            label:
+              "BİLEŞEN",
+
+            code,
+
+            quantity:
+              validQuantity(
+                product.alt_bilesen_2_miktar
+              ),
+          })
+        ),
+      ];
+
+    return (
       <View
         style={
-          styles.cardImageCol
-        }
-      >
-        {imgDataUrl ? (
-          <Image
-            style={
-              styles.cardImg
-            }
-            src={
-              imgDataUrl
-            }
-          />
-        ) : (
-          <Text
-            style={
-              styles.noImg
-            }
-          >
-            GÖRSEL YOK
-          </Text>
-        )}
-      </View>
-
-      <View
-        style={
-          styles.cardContent
+          isLast
+            ? [
+                styles.card,
+                styles.cardLast,
+              ]
+            : styles.card
         }
       >
         <View
           style={
-            styles.codeBar
+            styles.cardImageCol
           }
         >
           <View
             style={
-              styles.codeBarBadge
+              styles.imageArea
             }
           >
-            <Text
-              style={
-                styles.codeBarBadgeText
-              }
-            >
-              TORQON
-            </Text>
+            {imgDataUrl ? (
+              <Image
+                style={
+                  styles.cardImg
+                }
+                src={
+                  imgDataUrl
+                }
+              />
+            ) : (
+              <Text
+                style={
+                  styles.noImg
+                }
+              >
+                GÖRSEL YOK
+              </Text>
+            )}
           </View>
 
-          <Text
-            style={
-              styles.codeBarCode
-            }
-          >
-            {
-              product.mepak_kodu ||
-              "—"
-            }
-          </Text>
+          {relations.length >
+            0 && (
+            <View
+              style={
+                styles.relations
+              }
+            >
+              {relations.map(
+                (
+                  relation,
+                  index
+                ) => {
+                  const targetPage =
+                    productPages[
+                      normalizeProductCode(
+                        relation.code
+                      )
+                    ];
+
+                  return (
+                    <Text
+                      key={`relation-${index}`}
+                      style={
+                        styles.relation
+                      }
+                    >
+                      {
+                        relation.label
+                      }
+                      :{" "}
+
+                      {targetPage ? (
+                        <Link
+                          src={`${PAGE_LINK_PREFIX}${targetPage}`}
+                          style={
+                            styles.relationLink
+                          }
+                        >
+                          {
+                            relation.code
+                          }
+                        </Link>
+                      ) : (
+                        relation.code
+                      )}
+
+                      {relation.quantity
+                        ? ` ×${relation.quantity}`
+                        : ""}
+                    </Text>
+                  );
+                }
+              )}
+            </View>
+          )}
         </View>
 
         <View
           style={
-            styles.infoAndQrRow
+            styles.cardContent
           }
         >
           <View
             style={
-              styles.infoArea
+              styles.codeBar
             }
           >
             <View
               style={
-                styles.infoRow
+                styles.codeBarBadge
               }
             >
               <Text
                 style={
-                  styles.infoLabel
+                  styles.codeBarBadgeText
                 }
               >
-                O.E.M
+                TORQON
               </Text>
-
-              <View
-                style={
-                  styles.infoBody
-                }
-              >
-                {oemList.length >
-                0 ? (
-                  <Text>
-                    {oemList
-                      .slice(
-                        0,
-                        4
-                      )
-                      .join(
-                        " · "
-                      )}
-                  </Text>
-                ) : (
-                  <Text
-                    style={
-                      styles.infoBodyMuted
-                    }
-                  >
-                    —
-                  </Text>
-                )}
-              </View>
             </View>
 
+            <Text
+              style={
+                styles.codeBarCode
+              }
+            >
+              {
+                product.mepak_kodu ||
+                "—"
+              }
+            </Text>
+          </View>
+
+          <View
+            style={
+              styles.infoAndQrRow
+            }
+          >
             <View
               style={
-                styles.infoRow
+                styles.infoArea
               }
             >
-              <Text
-                style={
-                  styles.infoLabel
-                }
-              >
-                MODELLER
-              </Text>
-
-              <View
-                style={
-                  styles.infoBody
-                }
-              >
-                {modelList.length >
-                0 ? (
-                  <Text>
-                    {modelList
-                      .slice(
-                        0,
-                        5
-                      )
-                      .join(
-                        " / "
-                      )}
-                  </Text>
-                ) : (
-                  <Text
-                    style={
-                      styles.infoBodyMuted
-                    }
-                  >
-                    —
-                  </Text>
-                )}
-              </View>
-            </View>
-
-            {formatYears(
-              product.model_yil
-            ) && (
               <View
                 style={
                   styles.infoRow
@@ -1135,10 +1406,10 @@ const ProductCard = ({
               >
                 <Text
                   style={
-                    styles.infoLabelOrange
+                    styles.infoLabel
                   }
                 >
-                  YIL
+                  O.E.M
                 </Text>
 
                 <View
@@ -1146,363 +1417,499 @@ const ProductCard = ({
                     styles.infoBody
                   }
                 >
-                  <Text>
-                    {formatYears(
-                      product.model_yil
-                    )}
-                  </Text>
+                  {oemList.length >
+                  0 ? (
+                    <Text>
+                      {oemList
+                        .slice(
+                          0,
+                          4
+                        )
+                        .join(
+                          " · "
+                        )}
+                    </Text>
+                  ) : (
+                    <Text
+                      style={
+                        styles.infoBodyMuted
+                      }
+                    >
+                      —
+                    </Text>
+                  )}
                 </View>
               </View>
-            )}
-          </View>
 
-          <View
-            style={
-              styles.qrBox
-            }
-          >
-            {qrDataUrl ? (
-              <Image
-                style={
-                  styles.qrImage
-                }
-                src={
-                  qrDataUrl
-                }
-              />
-            ) : (
               <View
-                style={[
-                  styles.qrImage,
-                  {
-                    backgroundColor:
-                      C.lightBg,
-                  },
-                ]}
-              />
-            )}
+                style={
+                  styles.infoRow
+                }
+              >
+                <Text
+                  style={
+                    styles.infoLabel
+                  }
+                >
+                  MODELLER
+                </Text>
 
-            <Text
+                <View
+                  style={
+                    styles.infoBody
+                  }
+                >
+                  {modelList.length >
+                  0 ? (
+                    <Text>
+                      {modelList
+                        .slice(
+                          0,
+                          5
+                        )
+                        .join(
+                          " / "
+                        )}
+                    </Text>
+                  ) : (
+                    <Text
+                      style={
+                        styles.infoBodyMuted
+                      }
+                    >
+                      —
+                    </Text>
+                  )}
+                </View>
+              </View>
+
+              {formatYears(
+                product.model_yil
+              ) && (
+                <View
+                  style={
+                    styles.infoRow
+                  }
+                >
+                  <Text
+                    style={
+                      styles.infoLabelOrange
+                    }
+                  >
+                    YIL
+                  </Text>
+
+                  <View
+                    style={
+                      styles.infoBody
+                    }
+                  >
+                    <Text>
+                      {formatYears(
+                        product.model_yil
+                      )}
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </View>
+
+            <View
               style={
-                styles.qrLabel
+                styles.qrBox
               }
             >
-              ÜRÜN SAYFASI
-            </Text>
+              {qrDataUrl ? (
+                <Image
+                  style={
+                    styles.qrImage
+                  }
+                  src={
+                    qrDataUrl
+                  }
+                />
+              ) : (
+                <View
+                  style={[
+                    styles.qrImage,
+                    {
+                      backgroundColor:
+                        C.lightBg,
+                    },
+                  ]}
+                />
+              )}
+
+              <Text
+                style={
+                  styles.qrLabel
+                }
+              >
+                ÜRÜN
+                SAYFASI
+              </Text>
+            </View>
           </View>
         </View>
       </View>
-    </View>
-  );
-};
+    );
+  };
 
 // ─────────────────────────────────────────────────────────────
 // Ürün sayfası
 // ─────────────────────────────────────────────────────────────
 
-const ProductPage = ({
-  group,
-  brandName,
-  chunk,
-  pageNumber,
-  qrMap,
-  imgMap,
-}: {
-  group: {
-    groupName: string;
-    groupNameEn?:
-      | string
-      | null;
-  };
+const ProductPage =
+  ({
+    group,
+    brandName,
+    chunk,
+    pageNumber,
+    qrMap,
+    imgMap,
+    productPages,
+  }: {
+    group: {
+      groupName:
+        string;
 
-  brandName: string;
-  chunk: Product[];
-  pageNumber: number;
-  qrMap: Map<
-    string,
-    string
-  >;
-  imgMap: Map<
-    string,
-    string
-  >;
-}) => (
-  <Page
-    size="A4"
-    style={styles.page}
-    wrap={false}
-  >
-    <Image
-      src={SAYFA_DUZENI}
+      groupNameEn?:
+        | string
+        | null;
+    };
+
+    brandName:
+      string;
+
+    chunk:
+      Product[];
+
+    pageNumber:
+      number;
+
+    qrMap:
+      Map<
+        string,
+        string
+      >;
+
+    imgMap:
+      Map<
+        string,
+        string
+      >;
+
+    productPages:
+      Record<
+        string,
+        number
+      >;
+  }) => (
+    <Page
+      size="A4"
       style={
-        PAGE_BG_STYLE
+        styles.page
       }
-    />
-
-    <View
-      style={
-        styles.pageInner
+      wrap={
+        false
       }
     >
+      <Image
+        src={
+          SAYFA_DUZENI
+        }
+        style={
+          PAGE_BG_STYLE
+        }
+      />
+
       <View
         style={
-          styles.pageHeader
+          styles.pageInner
         }
       >
         <View
           style={
-            styles.groupHeaderArea
+            styles.pageHeader
           }
         >
-          <Text
-            style={[
-              styles.groupName,
-              {
-                fontSize:
-                  groupTitleSize(
-                    group.groupName
-                  ),
-              },
-            ]}
-          >
-            {
-              group.groupName
+          <View
+            style={
+              styles.groupHeaderArea
             }
-          </Text>
-
-          {group.groupNameEn && (
+          >
             <Text
-              style={
-                styles.groupNameEn
-              }
+              style={[
+                styles.groupName,
+                {
+                  fontSize:
+                    groupTitleSize(
+                      group.groupName
+                    ),
+                },
+              ]}
             >
               {
-                group.groupNameEn
+                group.groupName
               }
             </Text>
+
+            {group.groupNameEn && (
+              <Text
+                style={
+                  styles.groupNameEn
+                }
+              >
+                {
+                  group.groupNameEn
+                }
+              </Text>
+            )}
+          </View>
+
+          <View
+            style={
+              styles.brandHeaderArea
+            }
+          >
+            <Text
+              style={[
+                styles.brandLabel,
+                {
+                  fontSize:
+                    headerBrandSize(
+                      brandName
+                    ),
+                },
+              ]}
+            >
+              {
+                brandName
+              }
+            </Text>
+          </View>
+        </View>
+
+        <View
+          style={{
+            flex: 1,
+            flexDirection:
+              "column",
+          }}
+        >
+          {chunk.map(
+            (
+              product,
+              pIdx
+            ) => {
+              const imageKey =
+                getFirstImageKey(
+                  product.resim_kodlari
+                );
+
+              return (
+                <ProductCard
+                  key={`prod-${pIdx}`}
+                  product={
+                    product
+                  }
+                  productPages={
+                    productPages
+                  }
+                  qrDataUrl={
+                    qrMap.get(
+                      product.id
+                    )
+                  }
+                  imgDataUrl={
+                    imageKey
+                      ? imgMap.get(
+                          imageKey
+                        )
+                      : undefined
+                  }
+                  isLast={
+                    pIdx ===
+                    chunk.length -
+                      1
+                  }
+                />
+              );
+            }
           )}
         </View>
 
         <View
           style={
-            styles.brandHeaderArea
+            styles.footer
           }
         >
+          {LOGO_DATA && (
+            <Image
+              src={
+                LOGO_DATA
+              }
+              style={{
+                width: 60,
+                height: 20,
+                objectFit:
+                  "contain",
+              }}
+            />
+          )}
+
           <Text
-            style={[
-              styles.brandLabel,
-              {
-                fontSize:
-                  headerBrandSize(
-                    brandName
-                  ),
-              },
-            ]}
+            style={
+              styles.footerPageNum
+            }
           >
-            {brandName}
+            {
+              pageNumber
+            }
+          </Text>
+
+          <Text
+            style={
+              styles.footerUrl
+            }
+          >
+            www.torqon.com.tr
           </Text>
         </View>
       </View>
-
-      <View
-        style={{
-          flex: 1,
-          flexDirection:
-            "column",
-        }}
-      >
-        {chunk.map(
-          (
-            product,
-            pIdx
-          ) => {
-            const imageKey =
-              getFirstImageKey(
-                product.resim_kodlari
-              );
-
-            return (
-              <ProductCard
-                key={`prod-${pIdx}`}
-                product={
-                  product
-                }
-                qrDataUrl={
-                  qrMap.get(
-                    product.id
-                  )
-                }
-                imgDataUrl={
-                  imageKey
-                    ? imgMap.get(
-                        imageKey
-                      )
-                    : undefined
-                }
-                isLast={
-                  pIdx ===
-                  chunk.length -
-                    1
-                }
-              />
-            );
-          }
-        )}
-      </View>
-
-      <View
-        style={
-          styles.footer
-        }
-      >
-        {LOGO_DATA && (
-          <Image
-            src={
-              LOGO_DATA
-            }
-            style={{
-              width: 60,
-              height: 20,
-              objectFit:
-                "contain",
-            }}
-          />
-        )}
-
-        <Text
-          style={
-            styles.footerPageNum
-          }
-        >
-          {pageNumber}
-        </Text>
-
-        <Text
-          style={
-            styles.footerUrl
-          }
-        >
-          www.torqon.com.tr
-        </Text>
-      </View>
-    </View>
-  </Page>
-);
+    </Page>
+  );
 
 // ─────────────────────────────────────────────────────────────
 // Ana çıktı
 // ─────────────────────────────────────────────────────────────
 
-export const ProductPages = ({
-  groupedBrands,
-  qrMap,
-  imgMap,
-  startPageNumber = 1,
-}: {
-  groupedBrands:
-    BrandGroup[];
+export const ProductPages =
+  ({
+    groupedBrands,
+    qrMap,
+    imgMap,
+    startPageNumber = 1,
+    productPages = {},
+  }: {
+    groupedBrands:
+      BrandGroup[];
 
-  qrMap: Map<
-    string,
-    string
-  >;
+    qrMap:
+      Map<
+        string,
+        string
+      >;
 
-  imgMap: Map<
-    string,
-    string
-  >;
+    imgMap:
+      Map<
+        string,
+        string
+      >;
 
-  startPageNumber?:
-    number;
-}) => {
-  const pages:
-    React.ReactNode[] =
-      [];
+    startPageNumber?:
+      number;
 
-  let pageNumber =
-    startPageNumber;
+    productPages?:
+      Record<
+        string,
+        number
+      >;
+  }) => {
+    const pages:
+      React.ReactNode[] =
+        [];
 
-  groupedBrands.forEach(
-    (
-      brandObj,
-      brandIdx
-    ) => {
-      pages.push(
-        <BrandDividerPage
-          key={`divider-${brandIdx}`}
-          brandObj={
-            brandObj
-          }
-        />
-      );
+    let pageNumber =
+      startPageNumber;
 
-      pageNumber++;
+    groupedBrands.forEach(
+      (
+        brandObj,
+        brandIdx
+      ) => {
+        pages.push(
+          <BrandDividerPage
+            key={`divider-${brandIdx}`}
+            brandObj={
+              brandObj
+            }
+          />
+        );
 
-      brandObj.groups.forEach(
-        (
-          group,
-          groupIdx
-        ) => {
-          const chunks:
-            Product[][] = [];
+        pageNumber++;
 
-          for (
-            let i = 0;
-            i <
-            group.products
-              .length;
-            i +=
-              PRODUCTS_PER_PAGE
-          ) {
-            chunks.push(
-              group.products.slice(
-                i,
-                i +
-                  PRODUCTS_PER_PAGE
-              )
+        brandObj.groups.forEach(
+          (
+            group,
+            groupIdx
+          ) => {
+            const chunks:
+              Product[][] =
+                [];
+
+            for (
+              let i = 0;
+              i <
+              group.products
+                .length;
+              i +=
+                PRODUCTS_PER_PAGE
+            ) {
+              chunks.push(
+                group.products.slice(
+                  i,
+                  i +
+                    PRODUCTS_PER_PAGE
+                )
+              );
+            }
+
+            chunks.forEach(
+              (
+                chunk,
+                chunkIdx
+              ) => {
+                pages.push(
+                  <ProductPage
+                    key={`page-${brandIdx}-${groupIdx}-${chunkIdx}`}
+                    group={
+                      group
+                    }
+                    brandName={
+                      brandObj.brand
+                    }
+                    chunk={
+                      chunk
+                    }
+                    pageNumber={
+                      pageNumber
+                    }
+                    qrMap={
+                      qrMap
+                    }
+                    imgMap={
+                      imgMap
+                    }
+                    productPages={
+                      productPages
+                    }
+                  />
+                );
+
+                pageNumber++;
+              }
             );
           }
+        );
+      }
+    );
 
-          chunks.forEach(
-            (
-              chunk,
-              chunkIdx
-            ) => {
-              pages.push(
-                <ProductPage
-                  key={`page-${brandIdx}-${groupIdx}-${chunkIdx}`}
-                  group={
-                    group
-                  }
-                  brandName={
-                    brandObj.brand
-                  }
-                  chunk={
-                    chunk
-                  }
-                  pageNumber={
-                    pageNumber
-                  }
-                  qrMap={
-                    qrMap
-                  }
-                  imgMap={
-                    imgMap
-                  }
-                />
-              );
-
-              pageNumber++;
-            }
-          );
+    return (
+      <>
+        {
+          pages
         }
-      );
-    }
-  );
-
-  return (
-    <>
-      {pages}
-    </>
-  );
-};
+      </>
+    );
+  };
