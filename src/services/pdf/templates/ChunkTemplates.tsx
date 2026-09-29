@@ -6,12 +6,15 @@ import {
   Product,
 } from "@/lib/catalog-data";
 
+import {
+  PRODUCTS_PER_PAGE,
+} from "../ProductLinks";
+
 import { BrandIndexPages } from "./BrandIndexPage";
 import { ProductPages } from "./ProductPages";
 
 const INTRO_PAGE_COUNT = 5;
 const BRANDS_PER_INDEX_PAGE = 21;
-const PRODUCTS_PER_PAGE = 4;
 
 /**
  * Marka dizininin kaç sayfa süreceğini hesaplar.
@@ -66,7 +69,10 @@ export function calculateBrandStartPages(
     indexPageCount +
     1;
 
-  for (const brand of groupedBrands) {
+  for (
+    const brand of
+    groupedBrands
+  ) {
     /*
      * Bu sayı markanın AYRAÇ sayfasıdır.
      */
@@ -77,15 +83,20 @@ export function calculateBrandStartPages(
     /*
      * Markanın ürün sayfalarını hesapla.
      *
-     * Her sayfada maksimum 4 ürün bulunur.
+     * Her sayfada maksimum
+     * PRODUCTS_PER_PAGE ürün bulunur.
      */
     const productPageCount =
       brand.groups.reduce(
-        (total, group) => {
+        (
+          total,
+          group
+        ) => {
           return (
             total +
             Math.ceil(
-              group.products.length /
+              group.products
+                .length /
                 PRODUCTS_PER_PAGE
             )
           );
@@ -97,7 +108,8 @@ export function calculateBrandStartPages(
      * +1 = marka ayraç sayfası
      */
     currentPage +=
-      1 + productPageCount;
+      1 +
+      productPageCount;
   }
 
   return brandStartPages;
@@ -137,22 +149,22 @@ export const getCoverAndIndexChunk = (
  * Bu markanın gerçek katalog başlangıç
  * sayfasıdır.
  *
- * Örneğin marka ayraç sayfası 37 ise:
+ * productPages:
+ * MEPAK kodu -> gerçek katalog sayfası
+ * eşleşmesini taşır.
  *
- * startPageNumber = 37
- *
- * ProductPages:
- * ayraç -> 37
- * ilk ürün sayfası -> 38
- * ikinci ürün sayfası -> 39
- *
- * şeklinde devam eder.
+ * Böylece ürün çifti ve bileşen kodları
+ * katalog içindeki ilgili ürüne bağlanabilir.
  */
 export const getProductChunk = (
   groupedBrands: BrandGroup[],
   qrMap: Map<string, string>,
   imgMap: Map<string, string>,
-  startPageNumber = 1
+  startPageNumber = 1,
+  productPages: Record<
+    string,
+    number
+  > = {}
 ) => {
   return (
     <Document>
@@ -161,6 +173,7 @@ export const getProductChunk = (
         qrMap,
         imgMap,
         startPageNumber,
+        productPages,
       })}
     </Document>
   );
