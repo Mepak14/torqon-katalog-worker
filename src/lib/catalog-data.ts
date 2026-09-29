@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { Product } from "@/lib/types";
+import { resolveProductCategory } from "@/lib/product-category";
 
 export type { Product };
 
@@ -30,34 +31,6 @@ export const DEFAULT_CATEGORY_ORDER = [
   "ROTMİLİ",
 ] as const;
 
-/**
- * Kaynak veride farklı yazılan kategori adlarını
- * tek bir standart isim altında toplar.
- */
-const CATEGORY_SYNONYMS: Record<string, string> = {
-  "ROT BAŞI": "ROTBAŞI",
-  "ROTKOLU": "ROT KOLU",
-
-  "MAKAS YATAK TAMİR TAKIMI":
-    "MAKAS YATAĞI TAMİR TAKIMI",
-
-  "S KAM TAMİR TAKIMI":
-    "S KAM MİLİ TAMİR TAKIMI",
-
-  "ÇALIŞMA SİLİNDİRİ HİDROLİK DİREKSİYON":
-    "ÇALIŞMA SİLİNDİRİ HİDROLİK DİREKSİYON",
-
-  "SİLİNDİR KABİN KALDIRMA":
-    "KABİN KALDIRMA SİLİNDİRİ",
-};
-
-/**
- * Gerçek kategori olmayan kayıtlar.
- */
-const CATEGORY_BLOCKLIST = new Set([
-  "SİSTEMDEN SİLİNDİ",
-]);
-
 type BrandOemMapping = {
   marka: string;
   oemler: string[];
@@ -82,13 +55,19 @@ function splitValues(
   if (Array.isArray(value)) {
     return value
       .map(String)
-      .map((item) => item.trim())
+      .map((item) =>
+        item.trim()
+      )
       .filter(Boolean);
   }
 
-  return String(value || "")
+  return String(
+    value || ""
+  )
     .split(/[\n,;|]+/)
-    .map((item) => item.trim())
+    .map((item) =>
+      item.trim()
+    )
     .filter(Boolean);
 }
 
@@ -99,93 +78,14 @@ function splitValues(
 function normalizeKey(
   value?: string | null
 ): string {
-  return (value || "")
+  return (
+    value ||
+    ""
+  )
     .trim()
-    .toLocaleUpperCase("tr-TR");
-}
-
-/**
- * tanim_tr alanından gerçek ürün kategorisini çıkarır.
- *
- * Örnek:
- *
- * "ROTBAŞI - M30x1.5 RHT"
- * ->
- * "ROTBAŞI"
- */
-export function extractCategoryFromTanim(
-  tanim?: string | null
-): string | null {
-  if (!tanim) {
-    return null;
-  }
-
-  const tanimUpper =
-    tanim
-      .toLocaleUpperCase("tr-TR")
-      .trim();
-
-  if (
-    CATEGORY_BLOCKLIST.has(
-      tanimUpper
-    )
-  ) {
-    return null;
-  }
-
-  /*
-   * Önce " - " öncesini al.
-   */
-  const base =
-    tanimUpper
-      .split(" - ")[0]
-      .trim();
-
-  /*
-   * Sonra veri içindeki ekstra ölçü,
-   * parantez vb. kısımları temizle.
-   */
-  let normalized = base
-    .replace(
-      /\s*[-–]?\s*L\s*:\s*[\d.,]+\s*MM.*/i,
-      ""
-    )
-    .replace(
-      /\s*\(.*$/g,
-      ""
-    )
-    .replace(
-      /\s*[-–]+\s*$/,
-      ""
-    )
-    .replace(
-      /,/g,
-      ""
-    )
-    .replace(
-      /\s{2,}/g,
-      " "
-    )
-    .trim();
-
-  if (
-    CATEGORY_SYNONYMS[
-      normalized
-    ]
-  ) {
-    normalized =
-      CATEGORY_SYNONYMS[
-        normalized
-      ];
-  }
-
-  if (
-    normalized.length < 2
-  ) {
-    return null;
-  }
-
-  return normalized;
+    .toLocaleUpperCase(
+      "tr-TR"
+    );
 }
 
 /**
@@ -202,8 +102,12 @@ export function mergeOrderedValues(
     Array.from(
       new Set(
         available
-          .map(normalizeKey)
-          .filter(Boolean)
+          .map(
+            normalizeKey
+          )
+          .filter(
+            Boolean
+          )
       )
     );
 
@@ -216,31 +120,49 @@ export function mergeOrderedValues(
     Array.from(
       new Set(
         configured
-          .map(normalizeKey)
-          .filter(Boolean)
+          .map(
+            normalizeKey
+          )
+          .filter(
+            Boolean
+          )
       )
     );
 
   const ordered =
     normalizedConfigured.filter(
-      (item) =>
-        availableSet.has(item)
+      (
+        item
+      ) =>
+        availableSet.has(
+          item
+        )
     );
 
   const configuredSet =
-    new Set(ordered);
+    new Set(
+      ordered
+    );
 
   const remaining =
     normalizedAvailable
       .filter(
-        (item) =>
-          !configuredSet.has(item)
+        (
+          item
+        ) =>
+          !configuredSet.has(
+            item
+          )
       )
-      .sort((a, b) =>
-        a.localeCompare(
-          b,
-          "tr"
-        )
+      .sort(
+        (
+          a,
+          b
+        ) =>
+          a.localeCompare(
+            b,
+            "tr"
+          )
       );
 
   return [
@@ -266,45 +188,54 @@ function getBrandMappings(
       "marka_oem_eslesmeleri_json"
     ];
 
-  /*
-   * Yeni marka/OEM eşleştirme yapısı.
-   */
   if (
-    typeof stored === "string" &&
+    typeof stored ===
+      "string" &&
     stored.trim()
   ) {
     try {
       const parsed =
-        JSON.parse(stored);
+        JSON.parse(
+          stored
+        );
 
       if (
-        Array.isArray(parsed)
+        Array.isArray(
+          parsed
+        )
       ) {
         const mappings =
           parsed
-            .map((item) => {
-              const marka =
-                normalizeKey(
-                  item?.marka
-                );
+            .map(
+              (
+                item
+              ) => {
+                const marka =
+                  normalizeKey(
+                    item?.marka
+                  );
 
-              const oemler =
-                splitValues(
-                  item?.oemler
-                );
+                const oemler =
+                  splitValues(
+                    item?.oemler
+                  );
 
-              return {
-                marka,
-                oemler,
-              };
-            })
+                return {
+                  marka,
+                  oemler,
+                };
+              }
+            )
             .filter(
-              (item) =>
+              (
+                item
+              ) =>
                 !!item.marka
             );
 
         if (
-          mappings.length > 0
+          mappings.length >
+          0
         ) {
           return mappings;
         }
@@ -317,67 +248,67 @@ function getBrandMappings(
     }
   }
 
-  /*
-   * Yeni çoklu marka alanı.
-   */
   const brands =
-    product.markalar?.length
+    product.markalar
+      ?.length
       ? product.markalar
       : splitValues(
           product.marka_adi
         );
 
-  /*
-   * Yeni çoklu OEM alanı.
-   */
   const oems =
-    product.oem_nolari?.length
+    product.oem_nolari
+      ?.length
       ? product.oem_nolari
       : splitValues(
           product.oem_no
         );
 
   return brands
-    .map((brand) => ({
-      marka:
-        normalizeKey(brand),
+    .map(
+      (
+        brand
+      ) => ({
+        marka:
+          normalizeKey(
+            brand
+          ),
 
-      oemler: oems,
-    }))
+        oemler:
+          oems,
+      })
+    )
     .filter(
-      (item) =>
+      (
+        item
+      ) =>
         !!item.marka
     );
 }
 
 /**
  * Çoklu markalı ürünleri PDF için marka bazında açar.
- *
- * Örneğin bir ürün:
- *
- * MERCEDES
- * MAN
- * VOLVO
- *
- * markalarına bağlıysa katalogda üç marka altında
- * gösterilebilir.
  */
 export function expandProductsByBrand(
   products: Product[]
 ): Product[] {
   return products.flatMap(
-    (product) => {
+    (
+      product
+    ) => {
       const mappings =
         getBrandMappings(
           product
         );
 
       if (
-        mappings.length === 0
+        mappings.length ===
+        0
       ) {
         return [
           {
             ...product,
+
             marka_adi:
               "DİĞER MARKALAR",
           },
@@ -385,7 +316,9 @@ export function expandProductsByBrand(
       }
 
       return mappings.map(
-        (mapping) => ({
+        (
+          mapping
+        ) => ({
           ...product,
 
           marka_adi:
@@ -416,54 +349,66 @@ export function expandProductsByBrand(
  */
 export async function getAllProducts(
   brands?: string[]
-): Promise<Product[]> {
-  const rows: Product[] = [];
+): Promise<
+  Product[]
+> {
+  const rows:
+    Product[] = [];
 
-  const PAGE_SIZE = 1000;
+  const PAGE_SIZE =
+    1000;
 
   for (
     let from = 0;
     ;
-    from += PAGE_SIZE
+    from +=
+      PAGE_SIZE
   ) {
     const {
       data,
       error,
-    } = await supabase
-      .from("products")
-      .select(
-        "id, mepak_kodu, tanim_tr, tanim_en, marka_adi, markalar, oem_no, oem_nolari, model, model_yil, resim_kodlari, metadata, category, is_active"
-      )
-      .eq(
-        "is_active",
-        true
-      )
-      .range(
-        from,
-        from +
-          PAGE_SIZE -
-          1
-      )
-      .order(
-        "mepak_kodu",
-        {
-          ascending: true,
-        }
-      );
+    } =
+      await supabase
+        .from(
+          "products"
+        )
+        .select(
+          "id, mepak_kodu, tanim_tr, tanim_en, marka_adi, markalar, oem_no, oem_nolari, model, model_yil, resim_kodlari, metadata, category, is_active"
+        )
+        .eq(
+          "is_active",
+          true
+        )
+        .range(
+          from,
+          from +
+            PAGE_SIZE -
+            1
+        )
+        .order(
+          "mepak_kodu",
+          {
+            ascending:
+              true,
+          }
+        );
 
-    if (error) {
+    if (
+      error
+    ) {
       throw error;
     }
 
     const batch =
-      (data || []) as Product[];
+      (
+        data ||
+        []
+      ) as Product[];
 
-    rows.push(...batch);
+    rows.push(
+      ...batch
+    );
 
-    /*
-     * Son batch 1000'den azsa
-     * veri bitmiştir.
-     */
     if (
       batch.length <
       PAGE_SIZE
@@ -472,36 +417,38 @@ export async function getAllProducts(
     }
   }
 
-  /*
-   * Marka filtresi yoksa bütün aktif ürünleri dön.
-   */
   if (
     !brands ||
-    brands.length === 0
+    brands.length ===
+      0
   ) {
     return rows;
   }
 
-  /*
-   * Marka filtresi varsa eski marka_adi alanına
-   * güvenmek yerine yeni çoklu marka sistemini kullan.
-   */
   const wantedBrands =
     new Set(
       brands
-        .map(normalizeKey)
-        .filter(Boolean)
+        .map(
+          normalizeKey
+        )
+        .filter(
+          Boolean
+        )
     );
 
   return rows.filter(
-    (product) => {
+    (
+      product
+    ) => {
       const mappings =
         getBrandMappings(
           product
         );
 
       return mappings.some(
-        (mapping) =>
+        (
+          mapping
+        ) =>
           wantedBrands.has(
             mapping.marka
           )
@@ -513,18 +460,20 @@ export async function getAllProducts(
 /**
  * Ürünleri marka ve kategori bazında gruplar.
  *
- * brandOrder:
- * Admin → Katalog Yönetimi → marka sırası
+ * Kategori önceliği:
  *
- * categoryOrder:
- * Admin → Katalog Yönetimi → kategori sırası
+ * 1. products.category
+ * 2. MEPAK kodu
+ * 3. tanim_tr
  */
 export function groupProductsByBrand(
   products: Product[],
-  brandOrder: string[] = [],
-  categoryOrder: string[] = [
-    ...DEFAULT_CATEGORY_ORDER,
-  ]
+  brandOrder:
+    string[] = [],
+  categoryOrder:
+    string[] = [
+      ...DEFAULT_CATEGORY_ORDER,
+    ]
 ): BrandGroup[] {
   const grouped =
     new Map<
@@ -539,9 +488,6 @@ export function groupProductsByBrand(
       >
     >();
 
-  /*
-   * Çoklu marka sistemini önce aç.
-   */
   const expandedProducts =
     expandProductsByBrand(
       products
@@ -558,15 +504,12 @@ export function groupProductsByBrand(
       "DİĞER MARKALAR";
 
     /*
-     * Önce tanim_tr içinden kategori bul.
-     * Olmazsa category kolonunu kullan.
+     * Site/admin ile aynı ortak
+     * kategori çözüm sırası kullanılır.
      */
     const category =
-      extractCategoryFromTanim(
-        product.tanim_tr
-      ) ||
-      normalizeKey(
-        product.category
+      resolveProductCategory(
+        product
       ) ||
       "DİĞER ÜRÜNLER";
 
@@ -575,19 +518,21 @@ export function groupProductsByBrand(
         product.tanim_en
       );
 
-    /*
-     * İngilizce kategori adında da "-" sonrası
-     * ürün detayını kaldır.
-     */
     const groupNameEn =
-      tanimEn.includes(" - ")
+      tanimEn.includes(
+        " - "
+      )
         ? tanimEn
-            .split(" - ")[0]
+            .split(
+              " - "
+            )[0]
             .trim()
         : tanimEn;
 
     if (
-      !grouped.has(brand)
+      !grouped.has(
+        brand
+      )
     ) {
       grouped.set(
         brand,
@@ -596,7 +541,9 @@ export function groupProductsByBrand(
     }
 
     const brandGroups =
-      grouped.get(brand)!;
+      grouped.get(
+        brand
+      )!;
 
     if (
       !brandGroups.has(
@@ -606,23 +553,27 @@ export function groupProductsByBrand(
       brandGroups.set(
         category,
         {
-          tr: category,
-          en: groupNameEn,
-          items: [],
+          tr:
+            category,
+
+          en:
+            groupNameEn,
+
+          items:
+            [],
         }
       );
     }
 
     brandGroups
-      .get(category)!
+      .get(
+        category
+      )!
       .items.push(
         product
       );
   }
 
-  /*
-   * Admin marka sırası uygulanır.
-   */
   const orderedBrands =
     mergeOrderedValues(
       brandOrder,
@@ -632,13 +583,14 @@ export function groupProductsByBrand(
     );
 
   return orderedBrands.map(
-    (brand) => {
+    (
+      brand
+    ) => {
       const brandGroups =
-        grouped.get(brand)!;
+        grouped.get(
+          brand
+        )!;
 
-      /*
-       * Admin kategori sırası uygulanır.
-       */
       const orderedCategories =
         mergeOrderedValues(
           categoryOrder,
@@ -649,18 +601,22 @@ export function groupProductsByBrand(
 
       const groups =
         orderedCategories.map(
-          (groupKey) => {
+          (
+            groupKey
+          ) => {
             const group =
               brandGroups.get(
                 groupKey
               )!;
 
-            /*
-             * Ürün kodlarını doğal sıra ile sırala.
-             */
             const sortedProducts =
-              [...group.items].sort(
-                (a, b) =>
+              [
+                ...group.items,
+              ].sort(
+                (
+                  a,
+                  b
+                ) =>
                   (
                     a.mepak_kodu ||
                     ""
@@ -669,7 +625,8 @@ export function groupProductsByBrand(
                       "",
                     "tr",
                     {
-                      numeric: true,
+                      numeric:
+                        true,
                     }
                   )
               );

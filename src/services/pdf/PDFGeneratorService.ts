@@ -8,9 +8,12 @@ import {
 
 import {
   groupProductsByBrand,
-  extractCategoryFromTanim,
   DEFAULT_CATEGORY_ORDER,
 } from "@/lib/catalog-data";
+
+import {
+  resolveProductCategory,
+} from "@/lib/product-category";
 
 import type { Product } from "@/lib/types";
 
@@ -585,11 +588,8 @@ export async function generateCatalogPDF(
         product
       ) => {
         const category =
-          extractCategoryFromTanim(
-            product.tanim_tr
-          ) ||
-          normalizeKey(
-            product.category
+          resolveProductCategory(
+            product
           );
 
         if (
