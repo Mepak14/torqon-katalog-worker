@@ -70,7 +70,9 @@ function parseStringArray(
   }
 
   try {
-    const parsed = JSON.parse(value);
+    const parsed = JSON.parse(
+      value
+    );
 
     if (!Array.isArray(parsed)) {
       return [...fallback];
@@ -80,11 +82,18 @@ function parseStringArray(
       new Set(
         parsed
           .filter(
-            (item): item is string =>
-              typeof item === "string"
+            (
+              item
+            ): item is string =>
+              typeof item ===
+              "string"
           )
-          .map(normalizeKey)
-          .filter(Boolean)
+          .map(
+            normalizeKey
+          )
+          .filter(
+            Boolean
+          )
       )
     );
   } catch {
@@ -106,13 +115,18 @@ function streamToFile(
   filePath: string
 ): Promise<void> {
   return new Promise(
-    (resolve, reject) => {
+    (
+      resolve,
+      reject
+    ) => {
       const fileStream =
         fs.createWriteStream(
           filePath
         );
 
-      stream.pipe(fileStream);
+      stream.pipe(
+        fileStream
+      );
 
       fileStream.on(
         "finish",
@@ -136,10 +150,20 @@ function uniqueProductsById(
   products: Product[]
 ): Product[] {
   const map =
-    new Map<string, Product>();
+    new Map<
+      string,
+      Product
+    >();
 
-  for (const product of products) {
-    if (!map.has(product.id)) {
+  for (
+    const product of
+    products
+  ) {
+    if (
+      !map.has(
+        product.id
+      )
+    ) {
       map.set(
         product.id,
         product
@@ -147,7 +171,9 @@ function uniqueProductsById(
     }
   }
 
-  return [...map.values()];
+  return [
+    ...map.values(),
+  ];
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -156,10 +182,17 @@ function uniqueProductsById(
 
 async function fetchCatalogSettings():
   Promise<CatalogSettings> {
-  const { data, error } =
+  const {
+    data,
+    error,
+  } =
     await supabaseAdmin
-      .from("site_settings")
-      .select("key, value");
+      .from(
+        "site_settings"
+      )
+      .select(
+        "key, value"
+      );
 
   if (error) {
     throw new Error(
@@ -168,14 +201,24 @@ async function fetchCatalogSettings():
   }
 
   const settings:
-    Record<string, string> = {};
+    Record<
+      string,
+      string
+    > = {};
 
-  for (const row of data || []) {
+  for (
+    const row of
+    data || []
+  ) {
     if (
-      typeof row.key === "string" &&
-      typeof row.value === "string"
+      typeof row.key ===
+        "string" &&
+      typeof row.value ===
+        "string"
     ) {
-      settings[row.key] =
+      settings[
+        row.key
+      ] =
         row.value;
     }
   }
@@ -200,10 +243,17 @@ async function fetchCatalogSettings():
 
 async function fetchActiveCategories():
   Promise<Set<string>> {
-  const { data, error } =
+  const {
+    data,
+    error,
+  } =
     await supabaseAdmin
-      .from("categories")
-      .select("name")
+      .from(
+        "categories"
+      )
+      .select(
+        "name"
+      )
       .eq(
         "is_active",
         true
@@ -216,11 +266,20 @@ async function fetchActiveCategories():
   }
 
   return new Set(
-    (data || [])
-      .map((row) =>
-        normalizeKey(row.name)
+    (
+      data || []
+    )
+      .map(
+        (
+          row
+        ) =>
+          normalizeKey(
+            row.name
+          )
       )
-      .filter(Boolean)
+      .filter(
+        Boolean
+      )
   );
 }
 
@@ -230,37 +289,43 @@ async function fetchActiveCategories():
 
 async function fetchAllProducts():
   Promise<Product[]> {
-  const rows: Product[] = [];
+  const rows:
+    Product[] = [];
 
   for (
     let from = 0;
     ;
-    from += DB_PAGE_SIZE
+    from +=
+      DB_PAGE_SIZE
   ) {
     const {
       data,
       error,
-    } = await supabaseAdmin
-      .from("products")
-      .select(
-        "id, mepak_kodu, tanim_tr, tanim_en, marka_adi, markalar, oem_no, oem_nolari, model, model_yil, resim_kodlari, metadata, category, is_active"
-      )
-      .eq(
-        "is_active",
-        true
-      )
-      .range(
-        from,
-        from +
-          DB_PAGE_SIZE -
-          1
-      )
-      .order(
-        "mepak_kodu",
-        {
-          ascending: true,
-        }
-      );
+    } =
+      await supabaseAdmin
+        .from(
+          "products"
+        )
+        .select(
+          "id, mepak_kodu, tanim_tr, tanim_en, marka_adi, markalar, oem_no, oem_nolari, model, model_yil, resim_kodlari, metadata, category, is_active, cift_parca_no, alt_bilesen_1, alt_bilesen_1_miktar, alt_bilesen_2, alt_bilesen_2_miktar"
+        )
+        .eq(
+          "is_active",
+          true
+        )
+        .range(
+          from,
+          from +
+            DB_PAGE_SIZE -
+            1
+        )
+        .order(
+          "mepak_kodu",
+          {
+            ascending:
+              true,
+          }
+        );
 
     if (error) {
       throw new Error(
@@ -269,9 +334,14 @@ async function fetchAllProducts():
     }
 
     const batch =
-      (data || []) as Product[];
+      (
+        data ||
+        []
+      ) as Product[];
 
-    rows.push(...batch);
+    rows.push(
+      ...batch
+    );
 
     console.log(
       `[PDF] Ürün yükleme: ${rows.length}`
@@ -296,7 +366,9 @@ async function uploadToGitHubReleases(
   filePath: string,
   hash: string,
   isFiltered: boolean
-): Promise<string | null> {
+): Promise<
+  string | null
+> {
   try {
     const baseName =
       isFiltered
@@ -308,7 +380,9 @@ async function uploadToGitHubReleases(
 
     const finalPath =
       path.join(
-        path.dirname(filePath),
+        path.dirname(
+          filePath
+        ),
         fileName
       );
 
@@ -325,7 +399,8 @@ async function uploadToGitHubReleases(
       execSync(
         "gh release view catalogs",
         {
-          stdio: "ignore",
+          stdio:
+            "ignore",
         }
       );
     } catch {
@@ -336,7 +411,8 @@ async function uploadToGitHubReleases(
       execSync(
         'gh release create catalogs --title "Kataloglar" --notes "Sistem tarafından otomatik üretilen kataloglar"',
         {
-          stdio: "inherit",
+          stdio:
+            "inherit",
         }
       );
     }
@@ -344,7 +420,8 @@ async function uploadToGitHubReleases(
     execSync(
       `gh release upload catalogs "${finalPath}" --clobber`,
       {
-        stdio: "inherit",
+        stdio:
+          "inherit",
       }
     );
 
@@ -406,7 +483,9 @@ async function uploadToGitHubReleases(
           }
         }
       }
-    } catch (cleanupError) {
+    } catch (
+      cleanupError
+    ) {
       const message =
         cleanupError instanceof
         Error
@@ -420,7 +499,8 @@ async function uploadToGitHubReleases(
     }
 
     const repo =
-      process.env.GITHUB_REPO;
+      process.env
+        .GITHUB_REPO;
 
     if (!repo) {
       throw new Error(
@@ -432,9 +512,12 @@ async function uploadToGitHubReleases(
       `https://github.com/` +
       `${repo}/releases/download/catalogs/${fileName}`
     );
-  } catch (error) {
+  } catch (
+    error
+  ) {
     const message =
-      error instanceof Error
+      error instanceof
+      Error
         ? error.message
         : "Bilinmeyen hata";
 
@@ -457,7 +540,9 @@ export async function generateCatalogPDF(
   filters?: CatalogFilters
 ): Promise<string> {
   const finalFilePath =
-    getTempFilePath(hash);
+    getTempFilePath(
+      hash
+    );
 
   registerServerFonts();
 
@@ -472,11 +557,12 @@ export async function generateCatalogPDF(
     allProducts,
     catalogSettings,
     activeCategories,
-  ] = await Promise.all([
-    fetchAllProducts(),
-    fetchCatalogSettings(),
-    fetchActiveCategories(),
-  ]);
+  ] =
+    await Promise.all([
+      fetchAllProducts(),
+      fetchCatalogSettings(),
+      fetchActiveCategories(),
+    ]);
 
   console.log(
     `[PDF] Aktif ürün: ${allProducts.length}`
@@ -492,7 +578,9 @@ export async function generateCatalogPDF(
 
   const activeProducts =
     allProducts.filter(
-      (product) => {
+      (
+        product
+      ) => {
         const category =
           extractCategoryFromTanim(
             product.tanim_tr
@@ -501,7 +589,9 @@ export async function generateCatalogPDF(
             product.category
           );
 
-        if (!category) {
+        if (
+          !category
+        ) {
           return false;
         }
 
@@ -534,18 +624,25 @@ export async function generateCatalogPDF(
 
   if (
     filters?.brands &&
-    filters.brands.length > 0
+    filters.brands
+      .length > 0
   ) {
     const selectedBrands =
       new Set(
         filters.brands
-          .map(normalizeKey)
-          .filter(Boolean)
+          .map(
+            normalizeKey
+          )
+          .filter(
+            Boolean
+          )
       );
 
     groupedBrands =
       groupedBrands.filter(
-        (brand) =>
+        (
+          brand
+        ) =>
           selectedBrands.has(
             normalizeKey(
               brand.brand
@@ -559,59 +656,76 @@ export async function generateCatalogPDF(
   // ─────────────────────────────────────────────────────────
 
   if (
-    filters?.categories &&
-    filters.categories.length > 0
+    filters
+      ?.categories &&
+    filters.categories
+      .length > 0
   ) {
     const selectedCategories =
       new Set(
         filters.categories
-          .map(normalizeKey)
-          .filter(Boolean)
+          .map(
+            normalizeKey
+          )
+          .filter(
+            Boolean
+          )
       );
 
     groupedBrands =
       groupedBrands
-        .map((brand) => {
-          const groups =
-            brand.groups.filter(
-              (group) =>
-                selectedCategories.has(
-                  normalizeKey(
-                    group.groupName
-                  )
-                )
-            );
-
-          return {
-            ...brand,
-
-            groups,
-
-            groupCount:
-              groups.length,
-
-            productCount:
-              groups.reduce(
+        .map(
+          (
+            brand
+          ) => {
+            const groups =
+              brand.groups.filter(
                 (
-                  total,
                   group
                 ) =>
-                  total +
-                  group.products
-                    .length,
-                0
-              ),
-          };
-        })
+                  selectedCategories.has(
+                    normalizeKey(
+                      group.groupName
+                    )
+                  )
+              );
+
+            return {
+              ...brand,
+
+              groups,
+
+              groupCount:
+                groups.length,
+
+              productCount:
+                groups.reduce(
+                  (
+                    total,
+                    group
+                  ) =>
+                    total +
+                    group
+                      .products
+                      .length,
+                  0
+                ),
+            };
+          }
+        )
         .filter(
-          (brand) =>
-            brand.groups.length >
+          (
+            brand
+          ) =>
+            brand.groups
+              .length >
             0
         );
   }
 
   if (
-    groupedBrands.length === 0
+    groupedBrands.length ===
+    0
   ) {
     throw new Error(
       "PDF için uygun aktif ürün bulunamadı."
@@ -638,9 +752,13 @@ export async function generateCatalogPDF(
 
   const catalogProducts =
     groupedBrands.flatMap(
-      (brand) =>
+      (
+        brand
+      ) =>
         brand.groups.flatMap(
-          (group) =>
+          (
+            group
+          ) =>
             group.products
         )
     );
@@ -672,18 +790,21 @@ export async function generateCatalogPDF(
   const [
     qrMap,
     imgMap,
-  ] = await Promise.all([
-    generateQRMapForProducts(
-      uniqueCatalogProducts.map(
-        (product) =>
-          product.id
-      )
-    ),
+  ] =
+    await Promise.all([
+      generateQRMapForProducts(
+        uniqueCatalogProducts.map(
+          (
+            product
+          ) =>
+            product.id
+        )
+      ),
 
-    prefetchProductImages(
-      uniqueCatalogProducts
-    ),
-  ]);
+      prefetchProductImages(
+        uniqueCatalogProducts
+      ),
+    ]);
 
   const mergeFiles:
     string[] = [];
@@ -704,7 +825,8 @@ export async function generateCatalogPDF(
 
   for (
     let i = 1;
-    i <= INTRO_COUNT;
+    i <=
+    INTRO_COUNT;
     i++
   ) {
     const introPath =
@@ -779,7 +901,9 @@ export async function generateCatalogPDF(
     string[] =
       new Array(
         groupedBrands.length
-      ).fill("");
+      ).fill(
+        ""
+      );
 
   for (
     let batchStart = 0;
@@ -832,7 +956,9 @@ export async function generateCatalogPDF(
           const chunkStream =
             await renderToStream(
               getProductChunk(
-                [brand],
+                [
+                  brand,
+                ],
                 qrMap,
                 imgMap,
                 startPageNumber
@@ -849,7 +975,8 @@ export async function generateCatalogPDF(
 
           chunkPaths[
             globalIdx
-          ] = cPath;
+          ] =
+            cPath;
         }
       )
     );
@@ -884,7 +1011,9 @@ export async function generateCatalogPDF(
     const cPath of
     chunkPaths
   ) {
-    if (!cPath) {
+    if (
+      !cPath
+    ) {
       continue;
     }
 
@@ -942,8 +1071,12 @@ export async function generateCatalogPDF(
 
   const isFiltered =
     !!(
-      filters?.brands?.length ||
-      filters?.categories?.length
+      filters
+        ?.brands
+        ?.length ||
+      filters
+        ?.categories
+        ?.length
     );
 
   const downloadUrl =
@@ -953,7 +1086,9 @@ export async function generateCatalogPDF(
       isFiltered
     );
 
-  if (!downloadUrl) {
+  if (
+    !downloadUrl
+  ) {
     throw new Error(
       "GitHub Releases'e PDF yükleme başarısız oldu."
     );
@@ -962,8 +1097,10 @@ export async function generateCatalogPDF(
   await updateJobStatus(
     jobId,
     {
-      status: "done",
-      progress: 100,
+      status:
+        "done",
+      progress:
+        100,
       file_url:
         downloadUrl,
     }
