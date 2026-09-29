@@ -754,10 +754,6 @@ export async function generateCatalogPDF(
    *
    * Bu harita ürün çifti ve bileşen
    * bağlantıları için kullanılır.
-   *
-   * Özel katalog oluşturulduğunda yalnızca
-   * o katalog içinde bulunan ürünler bu
-   * haritada yer alır.
    */
   const productPages =
     buildProductPageMap(
@@ -919,23 +915,72 @@ export async function generateCatalogPDF(
 
   // ─────────────────────────────────────────────────────────
   // Marka ürün sayfaları
+  //
+  // Eskiden:
+  // 1 marka = 1 PDF render
+  //
+  // Artık:
+  // 3 marka = 1 PDF render
   // ─────────────────────────────────────────────────────────
 
+  const BRANDS_PER_RENDER_CHUNK =
+    3;
+
+  /*
+   * 1 render içinde 3 marka olduğu için
+   * aynı anda 3 render çalıştırıyoruz.
+   *
+   * Böylece yaklaşık 9 marka aynı anda
+   * işlenmiş oluyor.
+   */
   const RENDER_CONCURRENCY =
-    8;
+    3;
+
+  /*
+   * Markaları 3'erli gruplara ayır.
+   */
+  const brandRenderChunks:
+    Array<
+      typeof groupedBrands
+    > = [];
+
+  for (
+    let i = 0;
+    i <
+    groupedBrands.length;
+    i +=
+      BRANDS_PER_RENDER_CHUNK
+  ) {
+    brandRenderChunks.push(
+      groupedBrands.slice(
+        i,
+        i +
+          BRANDS_PER_RENDER_CHUNK
+      )
+    );
+  }
+
+  console.log(
+    `[PDF] ${groupedBrands.length} marka, ` +
+      `${brandRenderChunks.length} render chunk'ına ayrıldı.`
+  );
 
   const chunkPaths:
     string[] =
       new Array(
-        groupedBrands.length
+        brandRenderChunks.length
       ).fill(
         ""
       );
 
+  /*
+   * Render chunk'larını kontrollü şekilde
+   * paralel oluştur.
+   */
   for (
     let batchStart = 0;
     batchStart <
-    groupedBrands.length;
+    brandRenderChunks.length;
     batchStart +=
       RENDER_CONCURRENCY
   ) {
@@ -943,11 +988,11 @@ export async function generateCatalogPDF(
       Math.min(
         batchStart +
           RENDER_CONCURRENCY,
-        groupedBrands.length
+        brandRenderChunks.length
       );
 
     const batchSlice =
-      groupedBrands.slice(
+      brandRenderChunks.slice(
         batchStart,
         batchEnd
       );
@@ -955,37 +1000,66 @@ export async function generateCatalogPDF(
     await Promise.all(
       batchSlice.map(
         async (
-          brand,
+          brandChunk,
           offsetInBatch
         ) => {
           const globalIdx =
             batchStart +
             offsetInBatch;
 
+          const firstBrand =
+            brandChunk[0];
+
+          if (
+            !firstBrand
+          ) {
+            return;
+          }
+
           const cPath =
             getTempFilePath(
               `${hash}_chunk_prod_${globalIdx}`
             );
 
+          /*
+           * Chunk içindeki ilk markanın
+           * gerçek katalog başlangıç sayfası.
+           *
+           * Sonraki markaların sayfa numaraları
+           * ProductPages içinde otomatik olarak
+           * devam eder.
+           */
           const startPageNumber =
             brandStartPages[
-              brand.brand
+              firstBrand.brand
             ];
 
           if (
             !startPageNumber
           ) {
             throw new Error(
-              `${brand.brand} için başlangıç sayfası hesaplanamadı.`
+              `${firstBrand.brand} için başlangıç sayfası hesaplanamadı.`
             );
           }
+
+          console.log(
+            `[PDF] Render chunk ${globalIdx + 1}/${brandRenderChunks.length}: ` +
+              brandChunk
+                .map(
+                  (
+                    brand
+                  ) =>
+                    brand.brand
+                )
+                .join(
+                  ", "
+                )
+          );
 
           const chunkStream =
             await renderToStream(
               getProductChunk(
-                [
-                  brand,
-                ],
+                brandChunk,
                 qrMap,
                 imgMap,
                 startPageNumber,
@@ -1014,7 +1088,7 @@ export async function generateCatalogPDF(
         15 +
           (
             batchEnd /
-            groupedBrands.length
+            brandRenderChunks.length
           ) *
             78
       );
