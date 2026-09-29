@@ -26,6 +26,10 @@ import { prefetchProductImages } from "./ImageService";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { updateJobStatus } from "./JobQueue";
 
+import {
+  buildProductPageMap,
+} from "./ProductLinks";
+
 // ─────────────────────────────────────────────────────────────
 // Sabitler
 // ─────────────────────────────────────────────────────────────
@@ -70,9 +74,8 @@ function parseStringArray(
   }
 
   try {
-    const parsed = JSON.parse(
-      value
-    );
+    const parsed =
+      JSON.parse(value);
 
     if (!Array.isArray(parsed)) {
       return [...fallback];
@@ -517,9 +520,9 @@ async function uploadToGitHubReleases(
   ) {
     const message =
       error instanceof
-      Error
-        ? error.message
-        : "Bilinmeyen hata";
+        Error
+          ? error.message
+          : "Bilinmeyen hata";
 
     console.error(
       "[PDF] GitHub Releases upload hatası:",
@@ -746,6 +749,30 @@ export async function generateCatalogPDF(
     brandStartPages
   );
 
+  /*
+   * MEPAK kodu -> PDF sayfası
+   *
+   * Bu harita ürün çifti ve bileşen
+   * bağlantıları için kullanılır.
+   *
+   * Özel katalog oluşturulduğunda yalnızca
+   * o katalog içinde bulunan ürünler bu
+   * haritada yer alır.
+   */
+  const productPages =
+    buildProductPageMap(
+      groupedBrands,
+      brandStartPages
+    );
+
+  console.log(
+    `[PDF] Ürün iç bağlantı hedefi: ${
+      Object.keys(
+        productPages
+      ).length
+    }`
+  );
+
   // ─────────────────────────────────────────────────────────
   // Katalog ürünlerini çıkar
   // ─────────────────────────────────────────────────────────
@@ -961,7 +988,8 @@ export async function generateCatalogPDF(
                 ],
                 qrMap,
                 imgMap,
-                startPageNumber
+                startPageNumber,
+                productPages
               ) as unknown as Parameters<
                 typeof renderToStream
               >[0]
