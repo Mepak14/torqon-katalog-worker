@@ -7,6 +7,10 @@ import {
   PDFString,
 } from "pdf-lib";
 
+import {
+  PAGE_LINK_PREFIX,
+} from "./ProductLinks";
+
 import fs from "fs";
 
 /**
@@ -38,8 +42,17 @@ function decodePdfText(
 }
 
 /**
- * page=48 veya #page=48 gibi değerlerden
- * sayfa numarasını çıkarır.
+ * PDF link hedefinden gerçek sayfa
+ * numarasını çıkarır.
+ *
+ * Desteklenen formatlar:
+ *
+ * Marka dizini:
+ * page=48
+ * #page=48
+ *
+ * Ürün çifti / bileşen:
+ * https://torqon.invalid/pdf-page/245
  */
 function parsePageNumber(
   value: string | null
@@ -47,6 +60,38 @@ function parsePageNumber(
   if (!value) {
     return null;
   }
+
+  // ─────────────────────────────────────────────
+  // Ürün çifti / bileşen linki
+  // ─────────────────────────────────────────────
+
+  if (
+    value.startsWith(
+      PAGE_LINK_PREFIX
+    )
+  ) {
+    const pageNumber =
+      Number(
+        value.slice(
+          PAGE_LINK_PREFIX.length
+        )
+      );
+
+    if (
+      Number.isInteger(
+        pageNumber
+      ) &&
+      pageNumber > 0
+    ) {
+      return pageNumber;
+    }
+
+    return null;
+  }
+
+  // ─────────────────────────────────────────────
+  // Marka dizini linki
+  // ─────────────────────────────────────────────
 
   const match =
     value.match(
@@ -58,7 +103,9 @@ function parsePageNumber(
   }
 
   const pageNumber =
-    Number(match[1]);
+    Number(
+      match[1]
+    );
 
   if (
     !Number.isInteger(
@@ -74,23 +121,10 @@ function parsePageNumber(
 
 /**
  * React-PDF tarafından oluşturulan
- * marka dizini linkinin hedef sayfasını bulur.
+ * bağlantının hedef sayfasını bulur.
  *
- * React-PDF:
- *
- * <Link src="#page=48">
- *
- * kullanımını PDF içinde çoğunlukla:
- *
- * /A <<
- *   /S /GoTo
- *   /D (page=48)
- * >>
- *
- * biçiminde oluşturur.
- *
- * Eski kodumuz yalnızca /URI alanına baktığı
- * için bu linkleri göremiyordu.
+ * Hem marka dizini hem ürün ilişki
+ * bağlantıları burada çözülür.
  */
 function getPageNumberFromAnnotation(
   pdf: PDFDocument,
@@ -117,7 +151,9 @@ function getPageNumberFromAnnotation(
         );
 
       // ─────────────────────────────────────────
-      // React-PDF iç link:
+      // React-PDF GoTo bağlantısı
+      //
+      // Örnek:
       //
       // /A <<
       //   /S /GoTo
@@ -148,7 +184,11 @@ function getPageNumberFromAnnotation(
       }
 
       // ─────────────────────────────────────────
-      // Normal URI ihtimalini de destekle.
+      // URI bağlantısı
+      //
+      // Ürün çifti / bileşen için:
+      //
+      // https://torqon.invalid/pdf-page/245
       // ─────────────────────────────────────────
 
       const uriObject =
@@ -167,14 +207,15 @@ function getPageNumberFromAnnotation(
         );
 
       if (
-        uriPage !== null
+        uriPage !==
+        null
       ) {
         return uriPage;
       }
     } catch {
       /*
-       * Action okunamazsa doğrudan Dest
-       * kontrolüne devam et.
+       * Action okunamazsa doğrudan
+       * Dest kontrolüne devam et.
        */
     }
   }
@@ -199,7 +240,8 @@ function getPageNumberFromAnnotation(
     );
 
   if (
-    destPage !== null
+    destPage !==
+    null
   ) {
     return destPage;
   }
@@ -208,9 +250,18 @@ function getPageNumberFromAnnotation(
 }
 
 /**
- * Marka listesindeki React-PDF GoTo linklerini,
- * birleştirilmiş PDF içindeki gerçek sayfa
- * referanslarına dönüştürür.
+ * React-PDF tarafından oluşturulan
+ * geçici bağlantıları birleştirilmiş PDF
+ * içindeki gerçek sayfa referanslarına
+ * dönüştürür.
+ *
+ * Bu işlem:
+ *
+ * - marka dizini bağlantılarını
+ * - ürün çifti bağlantılarını
+ * - bileşen bağlantılarını
+ *
+ * aynı sistem üzerinden çözer.
  */
 function fixInternalPageLinks(
   pdf: PDFDocument
@@ -303,8 +354,8 @@ function fixInternalPageLinks(
       }
 
       /*
-       * PDF sayfa numarası 1'den başlıyor.
-       * JavaScript dizisi ise 0'dan.
+       * PDF sayfa numarası 1'den başlar.
+       * JavaScript dizisi 0'dan başlar.
        */
       const targetIndex =
         pageNumber - 1;
@@ -315,7 +366,7 @@ function fixInternalPageLinks(
           pages.length
       ) {
         console.warn(
-          `[PDF] Geçersiz marka linki: sayfa ${pageNumber}`
+          `[PDF] Geçersiz iç bağlantı: sayfa ${pageNumber}`
         );
 
         continue;
@@ -343,26 +394,21 @@ function fixInternalPageLinks(
         ]);
 
       /*
-       * Eski React-PDF GoTo action'ını kaldır.
-       *
-       * Çünkü eski action named destination
-       * arıyor:
-       *
-       * page=48
-       *
-       * fakat chunk birleştirmesi sonrasında
-       * bu named destination mevcut değil.
+       * React-PDF'nin eski action'ını
+       * kaldır.
        */
       annotation.delete(
         PDFName.of("A")
       );
 
       /*
-       * Yerine doğrudan gerçek PDF sayfasını
+       * Yerine gerçek PDF sayfasını
        * hedefleyen Dest ekle.
        */
       annotation.set(
-        PDFName.of("Dest"),
+        PDFName.of(
+          "Dest"
+        ),
         destination
       );
 
@@ -426,9 +472,13 @@ export async function mergePdfChunks(
   }
 
   /*
-   * Bütün chunk'lar birleştikten sonra
-   * marka dizini linklerini gerçek sayfalara
-   * bağla.
+   * Tüm chunk'lar birleştikten sonra:
+   *
+   * - marka dizini
+   * - ürün çifti
+   * - bileşen
+   *
+   * bağlantılarını gerçek PDF sayfalarına bağla.
    */
   const fixedLinkCount =
     fixInternalPageLinks(
@@ -436,20 +486,14 @@ export async function mergePdfChunks(
     );
 
   console.log(
-    `[PDF] ${fixedLinkCount} marka dizini bağlantısı düzeltildi.`
+    `[PDF] ${fixedLinkCount} iç PDF bağlantısı düzeltildi.`
   );
 
-  /*
-   * Ek kontrol:
-   *
-   * Marka varsa fakat hiçbir bağlantı
-   * bulunamadıysa logda açıkça görelim.
-   */
   if (
     fixedLinkCount === 0
   ) {
     console.warn(
-      "[PDF] UYARI: Marka dizininde düzeltilebilir bağlantı bulunamadı."
+      "[PDF] UYARI: Düzeltilebilir PDF iç bağlantısı bulunamadı."
     );
   }
 
