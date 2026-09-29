@@ -2,7 +2,7 @@ import sharp from "sharp";
 
 import { Product } from "@/lib/catalog-data";
 
-const BATCH_SIZE = 20;
+const BATCH_SIZE = 50;
 
 const IMAGE_MAX_SIZE = 600;
 const JPEG_QUALITY = 25;
@@ -16,8 +16,14 @@ type ImageResult = {
   buf: Buffer;
 };
 
+type ProductImageItem = {
+  raw: string;
+  keys: string[];
+  selectedKey?: string;
+};
+
 /**
- * resim_kodlari alanındaki bütün görsel
+ * resim_kodlari alanındaki görsel
  * dosyalarını sıralı şekilde ayırır.
  */
 function getImageKeys(
@@ -27,10 +33,15 @@ function getImageKeys(
     new Set(
       (value || "")
         .split(/[,;|\n]+/)
-        .map((item) =>
-          item.trim()
+        .map(
+          (
+            item
+          ) =>
+            item.trim()
         )
-        .filter(Boolean)
+        .filter(
+          Boolean
+        )
     )
   );
 }
@@ -38,8 +49,8 @@ function getImageKeys(
 /**
  * İndirilen ürün görselini PDF için optimize eder.
  *
- * - EXIF orientation önce uygulanır.
- * - Maksimum 600x600 px yapılır.
+ * - EXIF orientation uygulanır.
+ * - Maksimum 600x600 px.
  * - Küçük görseller büyütülmez.
  * - Transparan alanlar beyaz yapılır.
  * - JPEG kalite %25.
@@ -57,20 +68,8 @@ async function optimizeImage(
           "none",
       }
     )
-      /*
-       * EXIF orientation bilgisini uygula.
-       * Böylece metadata kaldırıldığında
-       * fotoğraf dönük çıkmaz.
-       */
       .rotate()
 
-      /*
-       * Katalogda görseller küçük kullanıldığı için
-       * 600x600 fazlasıyla yeterlidir.
-       *
-       * fit: inside
-       * oranı bozmadan sınırlar içinde tutar.
-       */
       .resize({
         width:
           IMAGE_MAX_SIZE,
@@ -85,10 +84,6 @@ async function optimizeImage(
           true,
       })
 
-      /*
-       * PNG gibi transparan görseller JPEG'e
-       * çevrilirken siyahlaşmasın.
-       */
       .flatten({
         background: {
           r: 255,
@@ -97,9 +92,6 @@ async function optimizeImage(
         },
       })
 
-      /*
-       * PDF için optimize JPEG.
-       */
       .jpeg({
         quality:
           JPEG_QUALITY,
@@ -114,10 +106,6 @@ async function optimizeImage(
           "4:2:0",
       })
 
-      /*
-       * Sharp varsayılan olarak EXIF/IPTC/XMP
-       * metadata'yı yeni çıktıya taşımaz.
-       */
       .toBuffer();
   } catch {
     return null;
@@ -126,7 +114,7 @@ async function optimizeImage(
 
 /**
  * Web sitesinin kullandığı R2 görsel
- * endpoint'inden görsel indirir.
+ * endpoint'inden tek görsel indirir.
  */
 async function downloadImage(
   key: string
@@ -145,7 +133,7 @@ async function downloadImage(
       setTimeout(
         () =>
           controller.abort(),
-        15000
+        10000
       );
 
     try {
@@ -201,10 +189,6 @@ async function downloadImage(
         return null;
       }
 
-      /*
-       * PDF'e orijinal dosya değil,
-       * optimize edilmiş JPEG girecek.
-       */
       const optimizedBuffer =
         await optimizeImage(
           originalBuffer
@@ -233,16 +217,118 @@ async function downloadImage(
 }
 
 /**
- * PDF için bütün ürün görsellerini hazırlar.
+ * Verilen görselleri 50'şerli
+ * paketler halinde indirip optimize eder.
+ */
+async function downloadKeys(
+  keys: string[],
+  downloaded: Map<
+    string,
+    string
+  >,
+  failed: Set<string>,
+  stats: {
+    optimizedImageCount: number;
+    optimizedTotalBytes: number;
+  },
+  roundNumber: number
+): Promise<void> {
+  for (
+    let i = 0;
+    i < keys.length;
+    i += BATCH_SIZE
+  ) {
+    const batch =
+      keys.slice(
+        i,
+        i +
+          BATCH_SIZE
+      );
+
+    await Promise.all(
+      batch.map(
+        async (
+          key
+        ) => {
+          /*
+           * Daha önce başarılı veya başarısız
+           * olarak kontrol edilen dosyayı
+           * tekrar indirme.
+           */
+          if (
+            downloaded.has(
+              key
+            ) ||
+            failed.has(
+              key
+            )
+          ) {
+            return;
+          }
+
+          const result =
+            await downloadImage(
+              key
+            );
+
+          if (
+            !result
+          ) {
+            failed.add(
+              key
+            );
+
+            return;
+          }
+
+          const dataUrl =
+            "data:image/jpeg;base64," +
+            result.buf.toString(
+              "base64"
+            );
+
+          downloaded.set(
+            key,
+            dataUrl
+          );
+
+          stats.optimizedImageCount++;
+
+          stats.optimizedTotalBytes +=
+            result.buf.length;
+        }
+      )
+    );
+
+    console.log(
+      `[PDF] Görsel turu ${roundNumber}: ` +
+        `${Math.min(
+          i +
+            BATCH_SIZE,
+          keys.length
+        )}/${keys.length}`
+    );
+  }
+}
+
+/**
+ * PDF için ürün görsellerini hazırlar.
  *
- * Ürün birden fazla resim koduna sahipse
- * mevcut sistemde bütün adaylar kontrol edilir.
+ * Hız optimizasyonu:
  *
- * İlk bulunan geçerli görsel ürün için kullanılır.
+ * Eskiden bütün görsel adayları baştan
+ * indiriliyor ve optimize ediliyordu.
  *
- * Bu aşamada yalnızca görseller optimize edildi.
- * Aday indirme sistemini sonraki testten sonra
- * ayrıca hızlandırabiliriz.
+ * Artık:
+ *
+ * 1. Önce her ürünün ilk görseli denenir.
+ * 2. İlk görseli bulunamayan ürünlerde
+ *    ikinci görsel denenir.
+ * 3. Gerekirse üçüncü ve sonraki
+ *    görsellere geçilir.
+ *
+ * Böylece PDF'de kullanılmayacak
+ * görseller gereksiz yere indirilmez.
  */
 export async function prefetchProductImages(
   products: Product[]
@@ -253,37 +339,38 @@ export async function prefetchProductImages(
       string
     >();
 
-  const productImages =
-    products
-      .map(
-        (
-          product
-        ) => {
-          const raw =
+  const productImages:
+    ProductImageItem[] =
+      products
+        .map(
+          (
             product
-              .resim_kodlari
-              ?.trim() ||
-            "";
-
-          const keys =
-            getImageKeys(
+          ) => {
+            const raw =
               product
                 .resim_kodlari
-            );
+                ?.trim() ||
+              "";
 
-          return {
-            raw,
-            keys,
-          };
-        }
-      )
-      .filter(
-        (
-          item
-        ) =>
-          item.keys
-            .length > 0
-      );
+            const keys =
+              getImageKeys(
+                product
+                  .resim_kodlari
+              );
+
+            return {
+              raw,
+              keys,
+            };
+          }
+        )
+        .filter(
+          (
+            item
+          ) =>
+            item.keys.length >
+            0
+        );
 
   if (
     productImages.length ===
@@ -296,28 +383,12 @@ export async function prefetchProductImages(
     return map;
   }
 
-  /**
-   * Aynı görsel kodu birden fazla üründe
-   * kullanılıyorsa yalnızca bir kez indir.
-   */
-  const uniqueKeys =
-    Array.from(
-      new Set(
-        productImages.flatMap(
-          (
-            item
-          ) =>
-            item.keys
-        )
-      )
-    );
-
   console.log(
-    `[PDF] ${uniqueKeys.length} farklı görsel adayı kontrol ediliyor...`
+    `[PDF] ${productImages.length} ürün için görsel hazırlanıyor...`
   );
 
   console.log(
-    `[PDF] Görsel optimizasyonu: maksimum ${IMAGE_MAX_SIZE}x${IMAGE_MAX_SIZE}px, JPEG kalite %${JPEG_QUALITY}`
+    `[PDF] Görsel ayarları: maksimum ${IMAGE_MAX_SIZE}x${IMAGE_MAX_SIZE}px, JPEG kalite %${JPEG_QUALITY}, paralel işlem ${BATCH_SIZE}`
   );
 
   const downloaded =
@@ -326,79 +397,182 @@ export async function prefetchProductImages(
       string
     >();
 
-  let optimizedImageCount =
-    0;
+  /*
+   * Bir kez bulunamadığı tespit edilen
+   * görseller tekrar denenmez.
+   */
+  const failed =
+    new Set<string>();
 
-  let optimizedTotalBytes =
-    0;
+  const stats = {
+    optimizedImageCount:
+      0,
 
-  /**
-   * Görselleri batch halinde indir ve optimize et.
+    optimizedTotalBytes:
+      0,
+  };
+
+  /*
+   * Herhangi bir üründe en fazla kaç
+   * görsel adayı olduğunu bul.
+   */
+  const maxCandidates =
+    productImages.reduce(
+      (
+        max,
+        item
+      ) =>
+        Math.max(
+          max,
+          item.keys.length
+        ),
+      0
+    );
+
+  /*
+   * Görsel adaylarını sıra sıra dene.
    *
-   * 20 seçildi çünkü Sharp aynı anda çok fazla
-   * büyük görsel işlerse runner RAM kullanımı
-   * gereksiz yükselir.
+   * candidateIndex 0:
+   * tüm ürünlerin ilk görseli.
+   *
+   * candidateIndex 1:
+   * yalnızca görsel bulunamayanların
+   * ikinci görseli.
    */
   for (
-    let i = 0;
-    i <
-    uniqueKeys.length;
-    i += BATCH_SIZE
+    let candidateIndex = 0;
+    candidateIndex <
+    maxCandidates;
+    candidateIndex++
   ) {
-    const batch =
-      uniqueKeys.slice(
-        i,
-        i +
-          BATCH_SIZE
+    const unresolved =
+      productImages.filter(
+        (
+          item
+        ) =>
+          !item.selectedKey &&
+          Boolean(
+            item.keys[
+              candidateIndex
+            ]
+          )
       );
 
-    await Promise.all(
-      batch.map(
-        async (
+    if (
+      unresolved.length ===
+      0
+    ) {
+      continue;
+    }
+
+    /*
+     * Bu turda kontrol edilecek
+     * benzersiz dosyaları çıkar.
+     */
+    const candidateKeys =
+      Array.from(
+        new Set(
+          unresolved
+            .map(
+              (
+                item
+              ) =>
+                item.keys[
+                  candidateIndex
+                ]
+            )
+            .filter(
+              (
+                key
+              ): key is string =>
+                Boolean(
+                  key
+                )
+            )
+        )
+      );
+
+    /*
+     * Önceden başarılı/başarısız kontrol
+     * edilmiş dosyaları tekrar işleme.
+     */
+    const keysToDownload =
+      candidateKeys.filter(
+        (
           key
-        ) => {
-          const result =
-            await downloadImage(
-              key
-            );
-
-          if (
-            !result
-          ) {
-            return;
-          }
-
-          /*
-           * Artık bütün PDF ürün görselleri
-           * JPEG olarak gönderiliyor.
-           */
-          const dataUrl =
-            "data:image/jpeg;base64," +
-            result.buf.toString(
-              "base64"
-            );
-
-          downloaded.set(
-            key,
-            dataUrl
-          );
-
-          optimizedImageCount++;
-
-          optimizedTotalBytes +=
-            result.buf.length;
-        }
-      )
-    );
+        ) =>
+          !downloaded.has(
+            key
+          ) &&
+          !failed.has(
+            key
+          )
+      );
 
     console.log(
-      `[PDF] Görsel optimizasyonu: ` +
-        `${Math.min(
-          i +
-            BATCH_SIZE,
-          uniqueKeys.length
-        )}/${uniqueKeys.length}`
+      `[PDF] Görsel turu ${candidateIndex + 1}: ${keysToDownload.length} yeni dosya kontrol ediliyor...`
     );
+
+    if (
+      keysToDownload.length >
+      0
+    ) {
+      await downloadKeys(
+        keysToDownload,
+        downloaded,
+        failed,
+        stats,
+        candidateIndex +
+          1
+      );
+    }
+
+    /*
+     * Bu turda başarılı bulunan
+     * görselleri ürünlere bağla.
+     */
+    for (
+      const item of
+      unresolved
+    ) {
+      const key =
+        item.keys[
+          candidateIndex
+        ];
+
+      if (
+        key &&
+        downloaded.has(
+          key
+        )
+      ) {
+        item.selectedKey =
+          key;
+      }
+    }
+
+    const remaining =
+      productImages.filter(
+        (
+          item
+        ) =>
+          !item.selectedKey
+      ).length;
+
+    console.log(
+      `[PDF] Görsel turu ${candidateIndex + 1} tamamlandı. Görselsiz kalan ürün: ${remaining}`
+    );
+
+    /*
+     * Bütün ürünlere görsel bulunduysa
+     * sonraki adaylara bakmaya gerek yok.
+     */
+    if (
+      remaining ===
+      0
+    ) {
+      break;
+    }
   }
 
   let productsWithImage =
@@ -407,35 +581,15 @@ export async function prefetchProductImages(
   let productsWithoutImage =
     0;
 
-  /**
-   * Her ürün için ilk geçerli görseli seç.
+  /*
+   * Seçilen görselleri PDF map'ine aktar.
    */
   for (
     const item of
     productImages
   ) {
-    const firstKey =
-      item.keys[0];
-
-    let selectedKey:
-      | string
-      | undefined;
-
-    for (
-      const key of
-      item.keys
-    ) {
-      if (
-        downloaded.has(
-          key
-        )
-      ) {
-        selectedKey =
-          key;
-
-        break;
-      }
-    }
+    const selectedKey =
+      item.selectedKey;
 
     if (
       !selectedKey
@@ -461,7 +615,7 @@ export async function prefetchProductImages(
     productsWithImage++;
 
     /*
-     * Gerçek seçilen dosya anahtarı.
+     * Gerçek kullanılan görsel.
      */
     map.set(
       selectedKey,
@@ -469,9 +623,13 @@ export async function prefetchProductImages(
     );
 
     /*
-     * ProductPages ilk görsel kodunu aradığı için
-     * ilk anahtar da seçilen geçerli görsele yönlenir.
+     * ProductPages ilk görsel anahtarını
+     * aradığı için ilk anahtarı da
+     * bulunan geçerli görsele yönlendir.
      */
+    const firstKey =
+      item.keys[0];
+
     if (
       firstKey
     ) {
@@ -482,7 +640,8 @@ export async function prefetchProductImages(
     }
 
     /*
-     * Eski kullanım biçimiyle uyumluluk.
+     * Eski kullanım biçimleriyle
+     * uyumluluğu koru.
      */
     if (
       item.raw
@@ -495,15 +654,15 @@ export async function prefetchProductImages(
   }
 
   const optimizedMb =
-    optimizedTotalBytes /
+    stats.optimizedTotalBytes /
     1024 /
     1024;
 
   const averageKb =
-    optimizedImageCount >
+    stats.optimizedImageCount >
     0
-      ? optimizedTotalBytes /
-        optimizedImageCount /
+      ? stats.optimizedTotalBytes /
+        stats.optimizedImageCount /
         1024
       : 0;
 
@@ -511,6 +670,10 @@ export async function prefetchProductImages(
     `[PDF] Görsel hazırlama tamamlandı: ` +
       `${productsWithImage} ürün görselli, ` +
       `${productsWithoutImage} ürün için geçerli görsel bulunamadı.`
+  );
+
+  console.log(
+    `[PDF] Gerçekten indirilen/optimize edilen görsel: ${stats.optimizedImageCount}`
   );
 
   console.log(
