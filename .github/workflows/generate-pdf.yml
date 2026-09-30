@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   generate:
@@ -32,10 +33,16 @@ jobs:
           JOB_ID: ${{ github.event.client_payload.jobId }}
           CONTENT_HASH: ${{ github.event.client_payload.hash }}
           FILTERS: ${{ toJSON(github.event.client_payload.filters) }}
+
+          GITHUB_RUN_ID: ${{ github.run_id }}
+
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
           SITE_URL: ${{ secrets.SITE_URL }}
+
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPO: ${{ github.repository }}
+
         run: npm run generate
