@@ -77,8 +77,9 @@ try {
 /**
  * Mevcut GitHub Actions run'ını iptal eder.
  *
- * Bu özellikle kullanıcı job daha yeni
- * başlarken iptal etmişse kullanılır.
+ * Kullanıcı job daha yeni başlarken
+ * iptal etmişse burada çalışan run
+ * durdurulur.
  */
 async function cancelCurrentGithubRun():
   Promise<boolean> {
@@ -121,8 +122,8 @@ async function cancelCurrentGithubRun():
     /*
      * 202 = iptal kabul edildi.
      *
-     * 409 bazen run zaten iptal
-     * sürecindeyken gelebilir.
+     * 409 = run zaten iptal ediliyor
+     * veya tamamlanmış olabilir.
      */
     if (
       response.ok ||
@@ -159,12 +160,12 @@ async function cancelCurrentGithubRun():
 /**
  * GitHub run ID'yi job kaydına yazar.
  *
- * Aynı anda cancel_requested değerini de
+ * Aynı anda cancel_requested değerini
  * kontrol eder.
  *
- * Böylece kullanıcı run ID oluşmadan önce
- * iptal etmişse worker başlar başlamaz
- * kendini iptal eder.
+ * Böylece kullanıcı GitHub run tam
+ * başlamadan önce iptal etmişse worker
+ * başlar başlamaz kendini durdurabilir.
  */
 async function registerGithubRun():
   Promise<boolean> {
@@ -192,7 +193,7 @@ async function registerGithubRun():
       })
       .eq(
         "id",
-        jobId
+        jobId!
       )
       .select(
         "cancel_requested"
@@ -267,9 +268,6 @@ async function main() {
       /*
        * GitHub runner'ın cancellation
        * sinyalini almasını bekle.
-       *
-       * Normal şartlarda GitHub bu process'i
-       * birkaç saniye içinde sonlandırır.
        */
       await new Promise<void>(
         (
@@ -294,8 +292,8 @@ async function main() {
 
   const url =
     await generateCatalogPDF(
-      jobId,
-      hash,
+      jobId!,
+      hash!,
       filters
     );
 
