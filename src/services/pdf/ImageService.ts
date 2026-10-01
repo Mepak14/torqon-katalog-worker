@@ -2,10 +2,41 @@ import sharp from "sharp";
 
 import { Product } from "@/lib/catalog-data";
 
-const BATCH_SIZE = 100;
+/*
+ * Aynı anda indirilecek görsel sayısı.
+ *
+ * 100 yerine 60 kullanıyoruz.
+ * Böylece site görsel endpoint'ine
+ * daha kontrollü yük biner.
+ */
+const BATCH_SIZE = 60;
 
+/*
+ * Görsel optimizasyon ayarları.
+ */
 const IMAGE_MAX_SIZE = 450;
 const JPEG_QUALITY = 25;
+
+/*
+ * Her bir HTTP isteğinin maksimum
+ * bekleme süresi.
+ */
+const IMAGE_TIMEOUT_MS = 20000;
+
+/*
+ * Bir görsel başarısız olursa
+ * toplam kaç kez denenecek.
+ */
+const MAX_RETRIES = 3;
+
+/*
+ * Retry aralarında beklenecek
+ * temel süre.
+ *
+ * 1. retry: 400ms
+ * 2. retry: 800ms
+ */
+const RETRY_DELAY_MS = 400;
 
 const SITE_URL = (
   process.env.SITE_URL ||
@@ -47,9 +78,27 @@ function getImageKeys(
 }
 
 /**
+ * Kısa bekleme.
+ */
+function wait(
+  milliseconds: number
+): Promise<void> {
+  return new Promise(
+    (
+      resolve
+    ) => {
+      setTimeout(
+        resolve,
+        milliseconds
+      );
+    }
+  );
+}
+
+/**
  * İndirilen ürün görselini PDF için optimize eder.
  *
- * Hız odaklı ayarlar:
+ * Hız / boyut odaklı ayarlar:
  *
  * - EXIF orientation uygulanır.
  * - Maksimum 450x450 px.
@@ -95,11 +144,6 @@ async function optimizeImage(
         },
       })
 
-      /*
-       * Hız için MozJPEG kullanılmıyor.
-       *
-       * Standart libjpeg daha hızlı çalışır.
-       */
       .jpeg({
         quality:
           JPEG_QUALITY,
@@ -112,130 +156,245 @@ async function optimizeImage(
       })
 
       .toBuffer();
-  } catch {
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[PDF] Görsel optimize edilemedi:",
+      error
+    );
+
     return null;
   }
 }
 
 /**
  * Web sitesinin kullandığı R2 görsel
- * endpoint'inden tek görsel indirir.
+ * endpoint'inden tek görseli bir kez
+ * indirmeyi dener.
  */
-async function downloadImage(
+async function downloadImageOnce(
   key: string
 ): Promise<ImageResult | null> {
+  const url =
+    `${SITE_URL}/api/gorsel/` +
+    encodeURIComponent(
+      key
+    );
+
+  const controller =
+    new AbortController();
+
+  const timeout =
+    setTimeout(
+      () =>
+        controller.abort(),
+      IMAGE_TIMEOUT_MS
+    );
+
   try {
-    const url =
-      `${SITE_URL}/api/gorsel/` +
-      encodeURIComponent(
-        key
+    const response =
+      await fetch(
+        url,
+        {
+          signal:
+            controller.signal,
+
+          cache:
+            "no-store",
+
+          headers: {
+            "User-Agent":
+              "Torqon-Catalog-PDF/1.0",
+
+            Accept:
+              "image/*",
+
+            "Cache-Control":
+              "no-cache",
+          },
+        }
       );
 
-    const controller =
-      new AbortController();
-
-    const timeout =
-      setTimeout(
-        () =>
-          controller.abort(),
-        10000
+    if (
+      !response.ok
+    ) {
+      console.warn(
+        `[PDF] Görsel HTTP hatası: ${key} → ${response.status}`
       );
 
-    try {
-      const response =
-        await fetch(
-          url,
-          {
-            signal:
-              controller.signal,
+      return null;
+    }
 
-            headers: {
-              "User-Agent":
-                "Torqon-Catalog-PDF/1.0",
+    const contentType =
+      response.headers.get(
+        "content-type"
+      ) ||
+      "";
 
-              Accept:
-                "image/*",
-            },
-          }
-        );
+    if (
+      !contentType.startsWith(
+        "image/"
+      )
+    ) {
+      console.warn(
+        `[PDF] Görsel olmayan içerik döndü: ${key} → ${contentType}`
+      );
 
-      if (
-        !response.ok
-      ) {
-        return null;
-      }
+      return null;
+    }
 
-      const contentType =
-        response.headers.get(
-          "content-type"
-        ) ||
-        "image/jpeg";
+    const arrayBuffer =
+      await response.arrayBuffer();
 
-      if (
-        !contentType.startsWith(
-          "image/"
-        )
-      ) {
-        return null;
-      }
+    const originalBuffer =
+      Buffer.from(
+        arrayBuffer
+      );
 
-      const arrayBuffer =
-        await response.arrayBuffer();
+    if (
+      originalBuffer.length ===
+      0
+    ) {
+      console.warn(
+        `[PDF] Boş görsel döndü: ${key}`
+      );
 
-      const originalBuffer =
-        Buffer.from(
-          arrayBuffer
-        );
+      return null;
+    }
 
-      if (
-        originalBuffer.length ===
+    const optimizedBuffer =
+      await optimizeImage(
+        originalBuffer
+      );
+
+    if (
+      !optimizedBuffer ||
+      optimizedBuffer.length ===
         0
-      ) {
-        return null;
-      }
+    ) {
+      console.warn(
+        `[PDF] Görsel optimize sonucu boş: ${key}`
+      );
 
-      const optimizedBuffer =
-        await optimizeImage(
-          originalBuffer
-        );
+      return null;
+    }
 
-      if (
-        !optimizedBuffer ||
-        optimizedBuffer.length ===
-          0
-      ) {
-        return null;
-      }
-
-      return {
-        buf:
-          optimizedBuffer,
-      };
-    } finally {
-      clearTimeout(
-        timeout
+    return {
+      buf:
+        optimizedBuffer,
+    };
+  } catch (
+    error
+  ) {
+    if (
+      error instanceof Error &&
+      error.name ===
+        "AbortError"
+    ) {
+      console.warn(
+        `[PDF] Görsel timeout: ${key} (${IMAGE_TIMEOUT_MS / 1000} sn)`
+      );
+    } else {
+      console.warn(
+        `[PDF] Görsel indirme hatası: ${key}`,
+        error
       );
     }
-  } catch {
+
     return null;
+  } finally {
+    clearTimeout(
+      timeout
+    );
   }
 }
 
 /**
- * Verilen görselleri 100'erli
- * paketler halinde indirip optimize eder.
+ * Tek bir görseli retry desteğiyle indirir.
+ *
+ * Toplam:
+ *
+ * Deneme 1
+ * Deneme 2
+ * Deneme 3
+ *
+ * Ancak üçü de başarısız olursa
+ * null döner.
+ */
+async function downloadImage(
+  key: string
+): Promise<ImageResult | null> {
+  for (
+    let attempt = 1;
+    attempt <=
+    MAX_RETRIES;
+    attempt++
+  ) {
+    const result =
+      await downloadImageOnce(
+        key
+      );
+
+    if (
+      result
+    ) {
+      if (
+        attempt >
+        1
+      ) {
+        console.log(
+          `[PDF] Görsel retry ile bulundu: ${key} (${attempt}. deneme)`
+        );
+      }
+
+      return result;
+    }
+
+    if (
+      attempt <
+      MAX_RETRIES
+    ) {
+      const delay =
+        RETRY_DELAY_MS *
+        attempt;
+
+      console.warn(
+        `[PDF] Görsel tekrar denenecek: ${key} (${attempt}/${MAX_RETRIES})`
+      );
+
+      await wait(
+        delay
+      );
+    }
+  }
+
+  console.error(
+    `[PDF] Görsel ${MAX_RETRIES} denemede alınamadı: ${key}`
+  );
+
+  return null;
+}
+
+/**
+ * Verilen görselleri 60'ar paket
+ * halinde indirip optimize eder.
  */
 async function downloadKeys(
   keys: string[],
+
   downloaded: Map<
     string,
     string
   >,
+
   failed: Set<string>,
+
   stats: {
     optimizedImageCount: number;
     optimizedTotalBytes: number;
   },
+
   roundNumber: number
 ): Promise<void> {
   for (
@@ -256,8 +415,10 @@ async function downloadKeys(
           key
         ) => {
           /*
-           * Daha önce başarılı veya başarısız
-           * kontrol edilen dosyayı tekrar işleme.
+           * Daha önce başarılı veya
+           * kesin başarısız olarak
+           * işaretlenen dosyayı
+           * tekrar işleme.
            */
           if (
             downloaded.has(
@@ -270,6 +431,10 @@ async function downloadKeys(
             return;
           }
 
+          /*
+           * downloadImage içerisinde
+           * zaten 3 retry var.
+           */
           const result =
             await downloadImage(
               key
@@ -278,6 +443,11 @@ async function downloadKeys(
           if (
             !result
           ) {
+            /*
+             * Ancak üç denemenin tamamı
+             * başarısız olduktan sonra
+             * failed listesine girer.
+             */
             failed.add(
               key
             );
@@ -318,14 +488,17 @@ async function downloadKeys(
 /**
  * PDF için ürün görsellerini hazırlar.
  *
- * Hız optimizasyonu:
+ * Mantık:
  *
- * 1. Önce her ürünün ilk görseli denenir.
- * 2. İlk görsel bulunamazsa ikinci görsel denenir.
- * 3. Gerekirse sonraki görsellere geçilir.
+ * 1. Her ürünün ilk görseli denenir.
+ * 2. Görsel alınamazsa aynı görsel
+ *    3 kez retry edilir.
+ * 3. Yine bulunamazsa ürünün ikinci
+ *    görseline geçilir.
+ * 4. Gerekirse sonraki görseller denenir.
  *
- * Böylece PDF'de kullanılmayacak görseller
- * gereksiz yere indirilmez.
+ * Böylece geçici HTTP / timeout
+ * problemlerinde ürün görselsiz kalmaz.
  */
 export async function prefetchProductImages(
   products: Product[]
@@ -385,7 +558,11 @@ export async function prefetchProductImages(
   );
 
   console.log(
-    `[PDF] Görsel ayarları: maksimum ${IMAGE_MAX_SIZE}x${IMAGE_MAX_SIZE}px, JPEG kalite %${JPEG_QUALITY}, paralel işlem ${BATCH_SIZE}, hızlı JPEG`
+    `[PDF] Görsel ayarları: maksimum ${IMAGE_MAX_SIZE}x${IMAGE_MAX_SIZE}px, ` +
+      `JPEG kalite %${JPEG_QUALITY}, ` +
+      `paralel işlem ${BATCH_SIZE}, ` +
+      `timeout ${IMAGE_TIMEOUT_MS / 1000} sn, ` +
+      `retry ${MAX_RETRIES}`
   );
 
   const downloaded =
@@ -395,8 +572,9 @@ export async function prefetchProductImages(
     >();
 
   /*
-   * Bir kez bulunamadığı tespit edilen
-   * görseller tekrar denenmez.
+   * Ancak bütün retry denemeleri
+   * başarısız olmuş görseller
+   * buraya eklenir.
    */
   const failed =
     new Set<string>();
@@ -427,19 +605,25 @@ export async function prefetchProductImages(
     );
 
   /*
-   * Görsel adaylarını sıra sıra dene.
+   * Görsel adaylarını sırayla dene.
    *
-   * candidateIndex 0:
+   * Tur 1:
    * tüm ürünlerin ilk görseli.
    *
-   * candidateIndex 1:
+   * Tur 2:
    * yalnızca ilk görseli bulunamayanların
    * ikinci görseli.
+   *
+   * Tur 3:
+   * gerekirse üçüncü görsel.
    */
   for (
-    let candidateIndex = 0;
+    let candidateIndex =
+      0;
+
     candidateIndex <
     maxCandidates;
+
     candidateIndex++
   ) {
     const unresolved =
@@ -490,8 +674,8 @@ export async function prefetchProductImages(
       );
 
     /*
-     * Önceden başarılı veya başarısız
-     * kontrol edilen dosyaları tekrar işleme.
+     * Daha önce kesin sonucu belli
+     * olan dosyaları tekrar işleme.
      */
     const keysToDownload =
       candidateKeys.filter(
@@ -507,7 +691,8 @@ export async function prefetchProductImages(
       );
 
     console.log(
-      `[PDF] Görsel turu ${candidateIndex + 1}: ${keysToDownload.length} yeni dosya kontrol ediliyor...`
+      `[PDF] Görsel turu ${candidateIndex + 1}: ` +
+        `${keysToDownload.length} yeni dosya kontrol ediliyor...`
     );
 
     if (
@@ -557,7 +742,8 @@ export async function prefetchProductImages(
       ).length;
 
     console.log(
-      `[PDF] Görsel turu ${candidateIndex + 1} tamamlandı. Görselsiz kalan ürün: ${remaining}`
+      `[PDF] Görsel turu ${candidateIndex + 1} tamamlandı. ` +
+        `Görselsiz kalan ürün: ${remaining}`
     );
 
     /*
@@ -579,6 +765,15 @@ export async function prefetchProductImages(
     0;
 
   /*
+   * PDF'de hiçbir geçerli görsel
+   * bulunamayan ürünleri takip etmek
+   * için liste.
+   */
+  const missingProducts:
+    string[] =
+      [];
+
+  /*
    * Seçilen görselleri PDF map'ine aktar.
    */
   for (
@@ -593,6 +788,13 @@ export async function prefetchProductImages(
     ) {
       productsWithoutImage++;
 
+      missingProducts.push(
+        item.raw ||
+          item.keys.join(
+            " | "
+          )
+      );
+
       continue;
     }
 
@@ -605,6 +807,11 @@ export async function prefetchProductImages(
       !dataUrl
     ) {
       productsWithoutImage++;
+
+      missingProducts.push(
+        item.raw ||
+          selectedKey
+      );
 
       continue;
     }
@@ -670,7 +877,8 @@ export async function prefetchProductImages(
   );
 
   console.log(
-    `[PDF] Gerçekten indirilen/optimize edilen görsel: ${stats.optimizedImageCount}`
+    `[PDF] Gerçekten indirilen/optimize edilen görsel: ` +
+      `${stats.optimizedImageCount}`
   );
 
   console.log(
@@ -682,6 +890,61 @@ export async function prefetchProductImages(
         1
       )} KB/görsel`
   );
+
+  /*
+   * PDF'de görseli bulunamayan
+   * ürün/görsel kodlarını açıkça logla.
+   */
+  if (
+    missingProducts.length >
+    0
+  ) {
+    console.warn(
+      `[PDF] Görseli bulunamayan ürün sayısı: ${missingProducts.length}`
+    );
+
+    console.warn(
+      "[PDF] Görseli bulunamayan kayıtlar:"
+    );
+
+    missingProducts.forEach(
+      (
+        item,
+        index
+      ) => {
+        console.warn(
+          `[PDF] ${index + 1}. ${item}`
+        );
+      }
+    );
+  }
+
+  /*
+   * HTTP / timeout / optimize nedeniyle
+   * bütün retry'leri başarısız olmuş
+   * gerçek görsel anahtarlarını da yaz.
+   */
+  if (
+    failed.size >
+    0
+  ) {
+    console.warn(
+      `[PDF] Tamamen başarısız görsel anahtarı: ${failed.size}`
+    );
+
+    Array.from(
+      failed
+    ).forEach(
+      (
+        key,
+        index
+      ) => {
+        console.warn(
+          `[PDF] FAILED ${index + 1}: ${key}`
+        );
+      }
+    );
+  }
 
   return map;
 }
