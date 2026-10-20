@@ -282,7 +282,7 @@ export async function generateContentHash(
   const payload =
     JSON.stringify({
       version:
-        "catalog-production-v3",
+        "catalog-production-v4",
 
       filters:
         normalizedFilters,
