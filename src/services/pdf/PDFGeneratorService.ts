@@ -28,6 +28,7 @@ import { generateQRMapForProducts } from "./QRService";
 import { prefetchProductImages } from "./ImageService";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { updateJobStatus } from "./JobQueue";
+import { PDFDocument } from "pdf-lib";
 
 import {
   buildProductPageMap,
@@ -43,7 +44,8 @@ const KATALOG_DIR = path.join(
   "katalog"
 );
 
-const INTRO_COUNT = 5;
+const CATALOG_COVER_FILE = "1.pdf";
+const BROCHURE_PAGE_INDICES = [1, 2, 3, 4];
 const DB_PAGE_SIZE = 1000;
 
 type CatalogFilters = {
@@ -836,7 +838,7 @@ export async function generateCatalogPDF(
     string[] = [];
 
   // ─────────────────────────────────────────────────────────
-  // Hazır giriş sayfaları
+  // Katalog kapağı + İngilizce broşürün 2–5. sayfaları
   // ─────────────────────────────────────────────────────────
 
   await updateJobStatus(
@@ -846,32 +848,33 @@ export async function generateCatalogPDF(
     }
   );
 
-  for (
-    let i = 1;
-    i <=
-    INTRO_COUNT;
-    i++
-  ) {
-    const introPath =
-      path.join(
-        KATALOG_DIR,
-        `${i}.pdf`
-      );
-
-    if (
-      fs.existsSync(
-        introPath
-      )
-    ) {
-      mergeFiles.push(
-        introPath
-      );
-    } else {
-      console.warn(
-        `[PDF] Intro PDF bulunamadı: ${i}.pdf`
-      );
-    }
+  const coverPath = path.join(KATALOG_DIR, CATALOG_COVER_FILE);
+  if (!fs.existsSync(coverPath)) {
+    throw new Error(`Katalog kapağı bulunamadı: ${CATALOG_COVER_FILE}`);
   }
+  const coverPdf = await PDFDocument.load(fs.readFileSync(coverPath));
+  if (coverPdf.getPageCount() !== 1) {
+    throw new Error("Katalog kapak PDF'i tek sayfa olmalıdır.");
+  }
+  mergeFiles.push(coverPath);
+
+  const siteUrl = (process.env.SITE_URL || "https://torqon.com.tr").replace(/\/$/, "");
+  const brochureResponse = await fetch(`${siteUrl}/api/brochures/pdf?language=en`, { cache: "no-store" });
+  if (!brochureResponse.ok) {
+    throw new Error("İngilizce broşür alınamadı. Broşür Yönetimi'nde İngilizce broşürün yayınlandığını kontrol edin.");
+  }
+  const brochurePdf = await PDFDocument.load(Buffer.from(await brochureResponse.arrayBuffer()));
+  if (brochurePdf.getPageCount() < 5) {
+    throw new Error("İngilizce broşür en az 5 sayfa olmalıdır; katalog giriş sayfaları eklenemedi.");
+  }
+
+  const introPdf = await PDFDocument.create();
+  const brochurePages = await introPdf.copyPages(brochurePdf, BROCHURE_PAGE_INDICES);
+  brochurePages.forEach((page) => introPdf.addPage(page));
+  const introPath = getTempFilePath(`${hash}_brochure_intro`);
+  fs.writeFileSync(introPath, await introPdf.save());
+  mergeFiles.push(introPath);
+  tempFiles.push(introPath);
 
   // ─────────────────────────────────────────────────────────
   // Marka dizini
